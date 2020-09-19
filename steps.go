@@ -40,8 +40,9 @@ type Step struct {
 	changed    bool
 
 	islist.NodeBase
-	bkgwDo bool // != false when not running .Backward
-	//depCount int32
+	inslist  bool
+	heapos   int
+	depCount int
 }
 
 func NewStep(s interface{}) *Step {
@@ -64,7 +65,7 @@ func (s *Step) ID() uintptr {
 
 func (s *Step) Description() string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "[%X", s.ID())
+	fmt.Fprintf(&sb, "[%x", s.ID())
 	if s.Desc != nil {
 		sb.WriteByte(':')
 		s.Desc(s, &sb)
@@ -121,29 +122,28 @@ func (s *Step) ForLeaves(do func(s *Step)) (n int) {
 }
 
 func (s *Step) ForEach(do func(s *Step)) (n int) {
+	lsOut := s.inslist
 	var todo islist.List
 	todo.PushBack(s)
+	s.inslist = !lsOut
 	for todo.Len() > 0 {
 		next := todo.Front().(*Step)
 		todo.Drop(1)
-		if next.bkgwDo {
-			continue
-		}
-		do(s)
-		next.bkgwDo = true
+		do(next)
 		n++
 		for _, d := range next.deps {
-			if !d.bkgwDo {
+			if d.inslist == lsOut {
 				todo.PushBack(d)
+				d.inslist = !lsOut
 			}
 		}
 		for _, t := range next.tgts {
-			if !t.bkgwDo {
+			if t.inslist == lsOut {
 				todo.PushBack(t)
+				t.inslist = !lsOut
 			}
 		}
 	}
-	s.clearUpdDo(&todo)
 	return n
 }
 
@@ -209,69 +209,3 @@ func (start *Step) Forward(update uint32, do VisitFunc) (blockUpdId uint32, err 
 	}
 	return blockUpdId, nil
 }
-
-func (start *Step) Backward(update uint32, revisit bool, do VisitFunc) (blockUpdId uint32, err error) {
-	if start.update > update {
-		return start.update, nil
-	} else if start.update == update && !revisit {
-		return start.update, nil
-	}
-	start.bkgwDo = false
-	var todo islist.List
-	todo.PushBack(start)
-	for todo.Len() > 0 {
-		next := todo.Front().(*Step)
-		if next.bkgwDo {
-			todo.Drop(1)
-			next.bkgwDo = false
-			if err := do(next); err != nil {
-				for it := todo.Front(); it != nil; it = it.ListNext() {
-					it.(*Step).bkgwDo = false
-				}
-				return blockUpdId, err
-			}
-			next.update = update
-		} else {
-			for i := len(next.deps) - 1; i >= 0; i-- {
-				dep := next.deps[i]
-				if dep.update < update || (dep.update == update && revisit) {
-					todo.PushFront(dep)
-					dep.bkgwDo = false
-				} else if dep.update > blockUpdId {
-					blockUpdId = dep.update
-				}
-			}
-			next.bkgwDo = true
-		}
-	}
-	return blockUpdId, nil
-}
-
-// requires all .updDo to be true
-//
-// s.updDo => all reachable "behind" s will also be set false
-// => don't push !s.updDo
-func (s *Step) clearUpdDo(todo *islist.List) {
-	todo.PushBack(s)
-	for todo.Len() > 0 {
-		next := todo.Front().(*Step)
-		todo.Drop(1)
-		next.bkgwDo = false
-		for _, d := range next.deps {
-			if d.bkgwDo {
-				todo.PushBack(d)
-			}
-		}
-		for _, t := range next.tgts {
-			if t.bkgwDo {
-				todo.PushBack(t)
-			}
-		}
-	}
-}
-
-// func (s *Step) targetsDepCount(add int32) {
-// 	for _, t := range s.tgts {
-// 		atomic.AddInt32(&t.depCount, add)
-// 	}
-// }

@@ -27,30 +27,7 @@ type arte struct {
 }
 
 func (a arte) UpToDate(s *Step) (buildHint interface{}, err error) {
-	return "must build this", nil
-}
-
-func ExampleTraverse1() {
-	mn := NewStep(thing("multi")).DependOn(NewStep(thing("multi.1")))
-	root := NewStep(thing("1")).DependOn(
-		NewStep(thing("1.1")),
-		NewStep(thing("1.2")).DependOn(
-			NewStep(thing("1.1.1")),
-			mn,
-			NewStep(thing("1.1.2")),
-		),
-		NewStep(thing("1.3")).DependOn(mn),
-	)
-	NewScheduler(qbsllm.Ltrace).Update1(root, 1)
-	// Output:
-	// Thing: 1.1
-	// Thing: 1.1.1
-	// Thing: multi.1
-	// Thing: multi
-	// Thing: 1.1.2
-	// Thing: 1.2
-	// Thing: 1.3
-	// Thing: 1
+	return "test always builds", nil
 }
 
 func ExampleTraverse() {
@@ -66,7 +43,7 @@ func ExampleTraverse() {
 		NewStep(a("1.3")).DependOn(mn),
 	)
 	hive := Hive{Bees: 1}
-	NewScheduler(qbsllm.Ldebug).Update(root, 1, &hive)
+	NewScheduler(qbsllm.Ltrace).Update(root, 1, &hive)
 	// Output:
 	// Thing: 1.1
 	// Thing: 1.1.1

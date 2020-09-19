@@ -1,9 +1,12 @@
 package gomk
 
 import (
+	"container/heap"
 	"fmt"
 	"io"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"git.fractalqb.de/fractalqb/qbsllm"
 )
@@ -28,53 +31,37 @@ func NewScheduler(logLevel qbsllm.Level) *Scheduler {
 	}
 }
 
-func (sched *Scheduler) Update1(s *Step, update uint32) (changed bool, err error) {
-	log := qbsllm.New(
-		sched.LogLevel,
-		fmt.Sprintf("U%d", update),
-		sched.LogWriter,
-		nil,
-	)
-	_, err = s.Backward(update, false, func(s *Step) error {
-		var buildHint interface{}
-		if len(s.deps) == 0 {
-			if s.UpToDate == nil {
-				buildHint = RootNode
-			} else if buildHint, err = s.UpToDate(s); err != nil {
-				log.Errora("update check for `step` fails with `err`", desc{s}, err)
-				return err
-			}
-		} else {
-			for _, d := range s.deps {
-				if d.ChangedFor(update) {
-					buildHint = DepChanged
-					break
-				}
-			}
-			if buildHint == nil && s.UpToDate != nil {
-				buildHint, err = s.UpToDate(s)
-				if err != nil {
-					log.Errora("update check for `step` fails with `err`", desc{s}, err)
-					return err
-				}
-			}
-		}
-		if buildHint == nil {
-			log.Debuga("`step` is up to date", desc{s})
-			s.changed = false
-		} else if s.Build != nil {
-			log.Infoa("build `step` with `hint`", desc{s}, buildHint)
-			s.changed, err = s.Build(s, buildHint)
-			if err != nil {
-				log.Errora("build `step` failed with `err`", desc{s}, err)
-			}
-		} else {
-			log.Debuga("`state` changed without rebuild, `hint`", desc{s}, buildHint)
-			s.changed = true
-		}
-		return err
-	})
-	return s.ChangedFor(update), err
+type stepHeap []*Step
+
+func (sh stepHeap) Len() int { return len(sh) }
+
+func (sh stepHeap) Less(i, j int) bool {
+	si, sj := sh[i], sh[j]
+	if si.depCount < 0 {
+		return false
+	} else if sj.depCount < 0 {
+		return true
+	}
+	return si.depCount < sj.depCount
+}
+
+func (sh stepHeap) Swap(i, j int) {
+	sh[i], sh[j] = sh[j], sh[i]
+	sh[i].heapos = i
+	sh[j].heapos = j
+}
+
+func (sh *stepHeap) Push(x interface{}) {
+	step := x.(*Step)
+	step.heapos = len(*sh)
+	*sh = append(*sh, step)
+}
+
+func (sh *stepHeap) Pop() interface{} {
+	lm1 := len(*sh) - 1
+	res := (*sh)[lm1]
+	*sh = (*sh)[:lm1]
+	return res
 }
 
 func (sched *Scheduler) Update(s *Step, update uint32, hive *Hive) (changed bool, err error) {
@@ -85,50 +72,50 @@ func (sched *Scheduler) Update(s *Step, update uint32, hive *Hive) (changed bool
 		nil,
 	)
 	log.Infoa("running concurrent up-to-date phase from `step`", desc{s})
+	var (
+		sheap    stepHeap
+		sheapMtx sync.Mutex
+	)
+	s.ForEach(func(s *Step) {
+		s.depCount = len(s.deps)
+		s.heapos = len(sheap)
+		sheap = append(sheap, s)
+	})
+	heap.Init(&sheap)
 	hive.start(log)
-	phase := make(chan struct{})
 	go func() {
-		for resp := range hive.respond {
-			if resp.hint != nil {
-				resp.step.changed = true
+		for {
+			sheapMtx.Lock()
+			if sheap.Len() == 0 {
+				sheapMtx.Unlock()
+				break
 			}
+			if sheap[0].depCount != 0 {
+				sheapMtx.Unlock()
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			next := heap.Pop(&sheap).(*Step)
+			sheapMtx.Unlock()
+			hive.sched <- &job{step: next}
 		}
-		close(phase)
+		close(hive.sched)
 	}()
-	_, err = s.Backward(update, false, func(s *Step) error {
-		if len(s.deps) == 0 {
-			if s.UpToDate == nil {
-				s.changed = true
-				// TODO build hint
-				log.Debuga("root `step` is considered changed", desc{s})
-			} else {
-				log.Tracea("update >- `root` for up-to-date check", desc{s})
-				hive.sched <- &job{step: s}
-			}
-		} else if s.UpToDate == nil {
-			s.changed = false
-		} else {
-			log.Tracea("update >- `step` for up-to-date check", desc{s})
-			hive.sched <- &job{step: s}
+	for job := range hive.respond {
+		sheapMtx.Lock()
+		for _, t := range job.step.tgts {
+			t.depCount--
+			heap.Fix(&sheap, t.heapos)
 		}
-		return nil
-	})
-	close(hive.sched)
-	<-phase
-	log.Infoa("up-to-date phase for `step` done", desc{s})
-	s.Backward(update, true, func(s *Step) error {
-		if s.changed {
-			log.Infoa("`step` no up to date", desc{s})
-		}
-		return nil
-	})
-	return s.ChangedFor(update), err
+		sheapMtx.Unlock()
+	}
+	return s.changed, nil
 }
 
 type job struct {
-	step *Step
-	hint interface{}
-	res  error
+	step    *Step
+	changed bool
+	res     error
 }
 
 type Hive struct {
@@ -155,41 +142,53 @@ func (h *Hive) start(log *qbsllm.Logger) {
 
 // TODO support parallel processing without breaking step order
 func (h *Hive) bee(id int) {
+	log := h.log
 	for job := range h.sched {
-		h.log.Tracea("`B`: -> `step` with `hint`", id, desc{job.step}, job.hint)
-		if job.hint == nil {
-			h.upToDate(job)
+		step := job.step
+		log.Tracea("`B`: -> `step`", id, desc{step})
+		var (
+			hint interface{}
+			err  error
+		)
+		if step.UpToDate == nil {
+			if len(step.deps) == 0 {
+				hint = RootNode
+			}
 		} else {
-			h.build(job)
+			hint, err = step.UpToDate(job.step)
 		}
+		if err != nil {
+			log.Errora("`B`: up-to-date check fails with `error`", id, err)
+			job.res = err
+			h.respond <- job
+			continue
+		}
+		if hint == nil {
+			log.Tracea("`B`: nothing to do for `step`", id, desc{job.step})
+			job.res = nil
+			h.respond <- job
+			continue
+		}
+		if step.Build == nil {
+			log.Infoa("`B`: non-build `step` (ignore `hint`)", id, desc{job.step}, hint)
+			job.changed = true
+		} else {
+			log.Infoa("`B`: build `step` with `hint`", id, desc{job.step}, hint)
+			job.changed, err = step.Build(job.step, hint)
+		}
+		if err != nil {
+			log.Errora("`B`: build failed with `error`", id, err)
+			job.res = err
+		}
+		h.respond <- job
 	}
 	if n := atomic.AddInt32(&h.size, -1); n == 0 {
-		h.log.Debuga("`B`: last bee closes response channel", id)
+		log.Debuga("`B`: last bee closes response channel", id)
 		close(h.respond)
 		h.sched = nil
 		h.respond = nil
 	} else if n < 0 {
-		h.log.Errora("`B`: bee terminates with `count`", n)
-	}
-}
-
-func (h *Hive) upToDate(job *job) {
-	h.log.Tracea("bee checks `step` for being up to date", desc{job.step})
-	if job.step.UpToDate != nil {
-		job.hint, job.res = job.step.UpToDate(job.step)
-		h.respond <- job
-	}
-}
-
-func (h *Hive) build(job *job) {
-	h.log.Tracea("bee builds `step` with `hint`", desc{job.step}, job.hint)
-	var err error
-	// job.step.targetsDepCount(-1)
-	job.step.changed, err = job.step.Build(job.step, job.hint)
-	if err != nil {
-		h.log.Errora("bee build `step` failed with `err`", desc{job.step}, err)
-	} else {
-		h.log.Tracea("bee build `step` `changed`", desc{job.step}, job.step.changed)
+		log.Errora("`B`: bee terminates with `count`", n)
 	}
 }
 
