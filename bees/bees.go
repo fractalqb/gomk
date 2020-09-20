@@ -119,6 +119,7 @@ func (sched *Scheduler) makeHeap(hive *Hive, sthp *stepHeap, log *qbsllm.Logger)
 				heapChg.Wait()
 			}
 			next := heap.Pop(sthp).(*Step)
+			next.heapos = -1
 			heapLock.Unlock()
 			hive.sched <- &job{step: next}
 		}
@@ -131,6 +132,9 @@ func (sched *Scheduler) makeHeap(hive *Hive, sthp *stepHeap, log *qbsllm.Logger)
 				desc{job.step})
 			err = job.res
 			heapLock.Lock()
+			for _, s := range *sthp {
+				s.heapos = -1
+			}
 			*sthp = (*sthp)[:0]
 			heapLock.Unlock()
 			heapChg.Signal()
@@ -199,12 +203,12 @@ func (h *Hive) bee(id int) {
 		if step.changed {
 			hint = DepChanged
 			step.changed = false
-		} else if step.UpToDate == nil {
+		} else if u2d, ok := step.subject.(Artefact); ok {
+			hint, err = u2d.UpToDate(job.step)
+		} else {
 			if len(step.deps) == 0 {
 				hint = RootNode
 			}
-		} else {
-			hint, err = step.UpToDate(job.step)
 		}
 		if err != nil {
 			log.Errora("`B`: up-to-date check fails with `error`", id, err)
@@ -218,12 +222,12 @@ func (h *Hive) bee(id int) {
 			h.respond <- job
 			continue
 		}
-		if step.Build == nil {
+		if bld, ok := step.subject.(Builder); ok {
+			log.Infoa("`B`: build `step` with `hint`", id, desc{job.step}, hint)
+			step.changed, err = bld.Build(job.step, hint)
+		} else {
 			log.Infoa("`B`: non-build `step` (ignore `hint`)", id, desc{job.step}, hint)
 			step.changed = true
-		} else {
-			log.Infoa("`B`: build `step` with `hint`", id, desc{job.step}, hint)
-			step.changed, err = step.Build(job.step, hint)
 		}
 		if err != nil {
 			log.Errora("`B`: build failed with `error`", id, err)

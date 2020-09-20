@@ -38,17 +38,87 @@ func testBeesNet1() (res []*Step) {
 	return res
 }
 
-// 1 2
+func ExampleScheduler_Make() {
+	net := testBeesNet1()
+	hive := Hive{Bees: 1}
+	sched := NewScheduler(qbsllm.Lwarn)
+	for i, step := range net {
+		fmt.Printf("Running update from step %d\n", i)
+		sched.Make(step, strconv.Itoa(i), &hive)
+	}
+	// Output:
+	// Running update from step 0
+	// build step 4 with hint 'RootNode'
+	// build step 5 with hint 'RootNode'
+	// build step 2 with hint 'DepChanged'
+	// build step 3 with hint 'DepChanged'
+	// build step 0 with hint 'DepChanged'
+	// build step 1 with hint 'DepChanged'
+	// Running update from step 1
+	// build step 5 with hint 'RootNode'
+	// build step 4 with hint 'RootNode'
+	// build step 3 with hint 'DepChanged'
+	// build step 2 with hint 'DepChanged'
+	// build step 1 with hint 'DepChanged'
+	// build step 0 with hint 'DepChanged'
+	// Running update from step 2
+	// build step 4 with hint 'RootNode'
+	// build step 5 with hint 'RootNode'
+	// build step 2 with hint 'DepChanged'
+	// build step 3 with hint 'DepChanged'
+	// build step 0 with hint 'DepChanged'
+	// build step 1 with hint 'DepChanged'
+	// Running update from step 3
+	// build step 5 with hint 'RootNode'
+	// build step 4 with hint 'RootNode'
+	// build step 3 with hint 'DepChanged'
+	// build step 2 with hint 'DepChanged'
+	// build step 1 with hint 'DepChanged'
+	// build step 0 with hint 'DepChanged'
+	// Running update from step 4
+	// build step 4 with hint 'RootNode'
+	// build step 5 with hint 'RootNode'
+	// build step 2 with hint 'DepChanged'
+	// build step 3 with hint 'DepChanged'
+	// build step 0 with hint 'DepChanged'
+	// build step 1 with hint 'DepChanged'
+	// Running update from step 5
+	// build step 5 with hint 'RootNode'
+	// build step 4 with hint 'RootNode'
+	// build step 3 with hint 'DepChanged'
+	// build step 2 with hint 'DepChanged'
+	// build step 1 with hint 'DepChanged'
+	// build step 0 with hint 'DepChanged'
+}
+
 func ExampleScheduler_Update() {
 	net := testBeesNet1()
 	hive := Hive{Bees: 1}
-	NewScheduler(qbsllm.Linfo).Update(net[0], strconv.Itoa(0), &hive)
-	NewScheduler(qbsllm.Linfo).Update(net[1], strconv.Itoa(1), &hive)
-	// for i, step := range net {
-	// 	fmt.Printf("Running update from step %d", i)
-	// 	NewScheduler(qbsllm.Linfo).Update(step, strconv.Itoa(i), &hive)
-	// }
-
+	sched := NewScheduler(qbsllm.Lwarn)
+	for i, step := range net {
+		fmt.Printf("Running update from step %d\n", i)
+		sched.Update(step, strconv.Itoa(i), &hive)
+	}
 	// Output:
-	// _
+	// Running update from step 0
+	// build step 4 with hint 'RootNode'
+	// build step 5 with hint 'RootNode'
+	// build step 2 with hint 'DepChanged'
+	// build step 3 with hint 'DepChanged'
+	// build step 0 with hint 'DepChanged'
+	// Running update from step 1
+	// build step 5 with hint 'RootNode'
+	// build step 3 with hint 'DepChanged'
+	// build step 1 with hint 'DepChanged'
+	// Running update from step 2
+	// build step 4 with hint 'RootNode'
+	// build step 5 with hint 'RootNode'
+	// build step 2 with hint 'DepChanged'
+	// Running update from step 3
+	// build step 5 with hint 'RootNode'
+	// build step 3 with hint 'DepChanged'
+	// Running update from step 4
+	// build step 4 with hint 'RootNode'
+	// Running update from step 5
+	// build step 5 with hint 'RootNode'
 }

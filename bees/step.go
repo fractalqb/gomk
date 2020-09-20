@@ -32,9 +32,7 @@ type Describer interface {
 //   changed:   dependency was built and has changed in this build
 //   no change: otherwise
 type Step struct {
-	Desc       func(*Step, io.Writer)
-	UpToDate   func(*Step) (interface{}, error)
-	Build      func(*Step, interface{}) (changed bool, err error)
+	subject    interface{}
 	tgts, deps []*Step
 	changed    bool // dual-use: 2nd during build when a dependency changed
 
@@ -45,15 +43,9 @@ type Step struct {
 }
 
 func NewStep(s interface{}) *Step {
-	res := new(Step)
-	if desc, ok := s.(Describer); ok {
-		res.Desc = desc.Describe
-	}
-	if artf, ok := s.(Artefact); ok {
-		res.UpToDate = artf.UpToDate
-	}
-	if bldr, ok := s.(Builder); ok {
-		res.Build = bldr.Build
+	res := &Step{
+		subject: s,
+		heapos:  -1,
 	}
 	return res
 }
@@ -65,9 +57,9 @@ func (s *Step) ID() uintptr {
 func (s *Step) Description() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "[%x", s.ID())
-	if s.Desc != nil {
+	if desc, ok := s.subject.(Describer); ok {
 		sb.WriteByte(':')
-		s.Desc(s, &sb)
+		desc.Describe(s, &sb)
 	}
 	sb.WriteByte(']')
 	return sb.String()
@@ -155,10 +147,6 @@ type Done struct {
 
 func (d Done) Error() string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Done [%X]", d.s.ID())
-	if d.s.Desc != nil {
-		fmt.Fprint(&sb, ": ")
-		d.s.Desc(d.s, &sb)
-	}
+	fmt.Fprintf(&sb, "Done %s", d.s.Description())
 	return sb.String()
 }
