@@ -63,14 +63,33 @@ func (sh *stepHeap) Pop() interface{} {
 	return res
 }
 
-func (sched *Scheduler) Update(s *Step, tag string, hive *Hive) (changed bool, err error) {
+func (sched *Scheduler) Update(s *Step, tag string, hive *Hive) (err error) {
 	log := qbsllm.New(
 		sched.LogLevel,
 		tag,
 		sched.LogWriter,
 		nil,
 	)
-	log.Infoa("running concurrent up-to-date phase from `step`", desc{s})
+	var sheap stepHeap
+	s.AllDeps(func(s *Step) {
+		s.changed = false
+		s.depCount = len(s.deps)
+		s.heapos = len(sheap)
+		sheap = append(sheap, s)
+	})
+	log.Infoa("update collected `count` dependencies from `step`", len(sheap), desc{s})
+	heap.Init(&sheap)
+	err = sched.makeHeap(hive, &sheap, log)
+	return err
+}
+
+func (sched *Scheduler) Make(s *Step, tag string, hive *Hive) (err error) {
+	log := qbsllm.New(
+		sched.LogLevel,
+		tag,
+		sched.LogWriter,
+		nil,
+	)
 	var sheap stepHeap
 	s.ForEach(func(s *Step) {
 		s.changed = false
@@ -78,14 +97,16 @@ func (sched *Scheduler) Update(s *Step, tag string, hive *Hive) (changed bool, e
 		s.heapos = len(sheap)
 		sheap = append(sheap, s)
 	})
+	log.Infoa("make collected `count` steps from `step`", len(sheap), desc{s})
 	heap.Init(&sheap)
-	sched.makeHeap(hive, &sheap, log)
-	return s.changed, nil
+	err = sched.makeHeap(hive, &sheap, log)
+	return err
 }
 
-func (sched *Scheduler) makeHeap(hive *Hive, sthp *stepHeap, log *qbsllm.Logger) {
+func (sched *Scheduler) makeHeap(hive *Hive, sthp *stepHeap, log *qbsllm.Logger) (err error) {
 	var heapLock sync.Mutex
 	heapChg := sync.NewCond(&heapLock)
+	log.Infoa("starting hive with `bees`", hive.Bees)
 	hive.start(log)
 	go func() {
 		for {
@@ -108,6 +129,7 @@ func (sched *Scheduler) makeHeap(hive *Hive, sthp *stepHeap, log *qbsllm.Logger)
 			log.Debuga("clear schedule heap for `error` with `step`",
 				job.res,
 				desc{job.step})
+			err = job.res
 			heapLock.Lock()
 			*sthp = (*sthp)[:0]
 			heapLock.Unlock()
@@ -125,6 +147,7 @@ func (sched *Scheduler) makeHeap(hive *Hive, sthp *stepHeap, log *qbsllm.Logger)
 			}
 		}
 	}
+	return err
 }
 
 type job struct {

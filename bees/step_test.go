@@ -43,7 +43,7 @@ func ExampleTraverse() {
 		NewStep(a("1.3")).DependOn(mn),
 	)
 	hive := NewHive(1)
-	NewScheduler(qbsllm.Ltrace).Update(root, "test", hive)
+	NewScheduler(qbsllm.Ltrace).Make(root, "test", hive)
 	// Output:
 	// Thing: 1.1
 	// Thing: 1.1.1

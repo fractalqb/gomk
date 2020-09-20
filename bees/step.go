@@ -73,40 +73,6 @@ func (s *Step) Description() string {
 	return sb.String()
 }
 
-func (s *Step) Roots() (roots []*Step, n int) {
-	n = s.ForEach(func(s *Step) {
-		if len(s.deps) == 0 {
-			roots = append(roots, s)
-		}
-	})
-	return roots, n
-}
-
-func (s *Step) Leaves() (leaves []*Step, n int) {
-	n = s.ForEach(func(s *Step) {
-		if len(s.tgts) == 0 {
-			leaves = append(leaves, s)
-		}
-	})
-	return leaves, n
-}
-
-func (s *Step) ForRoots(do func(s *Step)) (n int) {
-	return s.ForEach(func(s *Step) {
-		if len(s.deps) == 0 {
-			do(s)
-		}
-	})
-}
-
-func (s *Step) ForLeaves(do func(s *Step)) (n int) {
-	return s.ForEach(func(s *Step) {
-		if len(s.tgts) == 0 {
-			do(s)
-		}
-	})
-}
-
 func (s *Step) ForEach(do func(s *Step)) (n int) {
 	lsOut := s.inslist
 	var todo islist.List
@@ -127,6 +93,35 @@ func (s *Step) ForEach(do func(s *Step)) (n int) {
 			if t.inslist == lsOut {
 				todo.PushBack(t)
 				t.inslist = !lsOut
+			}
+		}
+	}
+	return n
+}
+
+func (s *Step) AllDeps(do func(s *Step)) (n int) {
+	lsOut := s.inslist
+	var deps, clear islist.List
+	defer func() {
+		for c := deps.Front(); c != nil; c = c.ListNext() {
+			c.(*Step).inslist = lsOut
+		}
+		for c := clear.Front(); c != nil; c = c.ListNext() {
+			c.(*Step).inslist = lsOut
+		}
+	}()
+	deps.PushBack(s)
+	s.inslist = !lsOut
+	for deps.Len() > 0 {
+		next := deps.Front().(*Step)
+		deps.Drop(1)
+		clear.PushBack(next)
+		do(next)
+		n++
+		for _, d := range next.deps {
+			if d.inslist == lsOut {
+				deps.PushBack(d)
+				d.inslist = !lsOut
 			}
 		}
 	}
