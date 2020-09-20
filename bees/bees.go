@@ -1,12 +1,11 @@
-package gomk
+package bees
 
 import (
 	"container/heap"
-	"fmt"
 	"io"
+	"runtime"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"git.fractalqb.de/fractalqb/qbsllm"
 )
@@ -64,58 +63,73 @@ func (sh *stepHeap) Pop() interface{} {
 	return res
 }
 
-func (sched *Scheduler) Update(s *Step, update uint32, hive *Hive) (changed bool, err error) {
+func (sched *Scheduler) Update(s *Step, tag string, hive *Hive) (changed bool, err error) {
 	log := qbsllm.New(
 		sched.LogLevel,
-		fmt.Sprintf("U%d", update),
+		tag,
 		sched.LogWriter,
 		nil,
 	)
 	log.Infoa("running concurrent up-to-date phase from `step`", desc{s})
-	var (
-		sheap    stepHeap
-		sheapMtx sync.Mutex
-	)
+	var sheap stepHeap
 	s.ForEach(func(s *Step) {
+		s.changed = false
 		s.depCount = len(s.deps)
 		s.heapos = len(sheap)
 		sheap = append(sheap, s)
 	})
 	heap.Init(&sheap)
+	sched.makeHeap(hive, &sheap, log)
+	return s.changed, nil
+}
+
+func (sched *Scheduler) makeHeap(hive *Hive, sthp *stepHeap, log *qbsllm.Logger) {
+	var heapLock sync.Mutex
+	heapChg := sync.NewCond(&heapLock)
 	hive.start(log)
 	go func() {
 		for {
-			sheapMtx.Lock()
-			if sheap.Len() == 0 {
-				sheapMtx.Unlock()
+			heapLock.Lock()
+			if sthp.Len() == 0 {
+				heapLock.Unlock()
 				break
 			}
-			if sheap[0].depCount != 0 {
-				sheapMtx.Unlock()
-				time.Sleep(100 * time.Millisecond)
-				continue
+			for (*sthp)[0].depCount != 0 {
+				heapChg.Wait()
 			}
-			next := heap.Pop(&sheap).(*Step)
-			sheapMtx.Unlock()
+			next := heap.Pop(sthp).(*Step)
+			heapLock.Unlock()
 			hive.sched <- &job{step: next}
 		}
 		close(hive.sched)
 	}()
 	for job := range hive.respond {
-		sheapMtx.Lock()
-		for _, t := range job.step.tgts {
-			t.depCount--
-			heap.Fix(&sheap, t.heapos)
+		if job.res != nil {
+			log.Debuga("clear schedule heap for `error` with `step`",
+				job.res,
+				desc{job.step})
+			heapLock.Lock()
+			*sthp = (*sthp)[:0]
+			heapLock.Unlock()
+			heapChg.Signal()
+		} else {
+			heapLock.Lock()
+			for _, t := range job.step.tgts {
+				t.changed = t.changed || job.step.changed
+				t.depCount--
+				heap.Fix(sthp, t.heapos)
+			}
+			heapLock.Unlock()
+			if len(job.step.tgts) > 0 {
+				heapChg.Signal()
+			}
 		}
-		sheapMtx.Unlock()
 	}
-	return s.changed, nil
 }
 
 type job struct {
-	step    *Step
-	changed bool
-	res     error
+	step *Step
+	res  error
 }
 
 type Hive struct {
@@ -124,6 +138,16 @@ type Hive struct {
 	sched   chan *job
 	respond chan *job
 	log     *qbsllm.Logger
+}
+
+func NewHive(size int) *Hive {
+	if size < 1 {
+		size = runtime.NumCPU() + size
+		if size < 1 {
+			size = 1
+		}
+	}
+	return &Hive{Bees: size}
 }
 
 func (h *Hive) start(log *qbsllm.Logger) {
@@ -140,7 +164,6 @@ func (h *Hive) start(log *qbsllm.Logger) {
 	}
 }
 
-// TODO support parallel processing without breaking step order
 func (h *Hive) bee(id int) {
 	log := h.log
 	for job := range h.sched {
@@ -150,7 +173,10 @@ func (h *Hive) bee(id int) {
 			hint interface{}
 			err  error
 		)
-		if step.UpToDate == nil {
+		if step.changed {
+			hint = DepChanged
+			step.changed = false
+		} else if step.UpToDate == nil {
 			if len(step.deps) == 0 {
 				hint = RootNode
 			}
@@ -171,10 +197,10 @@ func (h *Hive) bee(id int) {
 		}
 		if step.Build == nil {
 			log.Infoa("`B`: non-build `step` (ignore `hint`)", id, desc{job.step}, hint)
-			job.changed = true
+			step.changed = true
 		} else {
 			log.Infoa("`B`: build `step` with `hint`", id, desc{job.step}, hint)
-			job.changed, err = step.Build(job.step, hint)
+			step.changed, err = step.Build(job.step, hint)
 		}
 		if err != nil {
 			log.Errora("`B`: build failed with `error`", id, err)

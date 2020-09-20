@@ -1,4 +1,4 @@
-package gomk
+package bees
 
 import (
 	"fmt"
@@ -42,8 +42,8 @@ func ExampleTraverse() {
 		),
 		NewStep(a("1.3")).DependOn(mn),
 	)
-	hive := Hive{Bees: 1}
-	NewScheduler(qbsllm.Ltrace).Update(root, 1, &hive)
+	hive := NewHive(1)
+	NewScheduler(qbsllm.Ltrace).Update(root, "test", hive)
 	// Output:
 	// Thing: 1.1
 	// Thing: 1.1.1

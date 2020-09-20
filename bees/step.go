@@ -1,4 +1,4 @@
-package gomk
+package bees
 
 import (
 	"fmt"
@@ -36,8 +36,7 @@ type Step struct {
 	UpToDate   func(*Step) (interface{}, error)
 	Build      func(*Step, interface{}) (changed bool, err error)
 	tgts, deps []*Step
-	update     uint32
-	changed    bool
+	changed    bool // dual-use: 2nd during build when a dependency changed
 
 	islist.NodeBase
 	inslist  bool
@@ -72,19 +71,6 @@ func (s *Step) Description() string {
 	}
 	sb.WriteByte(']')
 	return sb.String()
-}
-
-func (s *Step) MaxUpdate() (max uint32) {
-	s.ForEach(func(s *Step) {
-		if s.update > max {
-			max = s.update
-		}
-	})
-	return max
-}
-
-func (s *Step) SetUpdate(update uint32) (n int) {
-	return s.ForEach(func(s *Step) { s.update = update })
 }
 
 func (s *Step) Roots() (roots []*Step, n int) {
@@ -166,9 +152,7 @@ func (s *Step) DependOn(ds ...*Step) *Step {
 	return s
 }
 
-func (s *Step) ChangedFor(update uint32) bool {
-	return s.update == update && s.changed
-}
+func (s *Step) Changed() bool { return s.changed }
 
 type Done struct {
 	s *Step
@@ -182,30 +166,4 @@ func (d Done) Error() string {
 		d.s.Desc(d.s, &sb)
 	}
 	return sb.String()
-}
-
-type VisitFunc func(s *Step) error
-
-func (start *Step) Forward(update uint32, do VisitFunc) (blockUpdId uint32, err error) {
-	var todo islist.List
-	pushTargets := func() {
-		for _, t := range start.tgts {
-			if t.update < update {
-				todo.PushBack(t)
-			} else if t.update > blockUpdId {
-				blockUpdId = t.update
-			}
-		}
-	}
-	pushTargets()
-	for todo.Len() > 0 {
-		start = todo.Front().(*Step)
-		todo.Drop(1)
-		start.update = update
-		if err := do(start); err != nil {
-			return blockUpdId, err
-		}
-		pushTargets()
-	}
-	return blockUpdId, nil
 }
