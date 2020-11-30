@@ -32,9 +32,9 @@ type Describer interface {
 //   changed:   dependency was built and has changed in this build
 //   no change: otherwise
 type Step struct {
-	subject    interface{}
-	tgts, deps []*Step
-	changed    bool // dual-use: 2nd during build when a dependency changed
+	subject       interface{}
+	tgts, prereqs []*Step
+	changed       bool // dual-use: 2nd during build when a dependency changed
 
 	islist.NodeBase
 	inslist  bool
@@ -42,9 +42,9 @@ type Step struct {
 	depCount int
 }
 
-func NewStep(s interface{}) *Step {
+func NewStep(subject interface{}) *Step {
 	res := &Step{
-		subject: s,
+		subject: subject,
 		heapos:  -1,
 	}
 	return res
@@ -75,7 +75,7 @@ func (s *Step) ForEach(do func(s *Step)) (n int) {
 		todo.Drop(1)
 		do(next)
 		n++
-		for _, d := range next.deps {
+		for _, d := range next.prereqs {
 			if d.inslist == lsOut {
 				todo.PushBack(d)
 				d.inslist = !lsOut
@@ -91,7 +91,7 @@ func (s *Step) ForEach(do func(s *Step)) (n int) {
 	return n
 }
 
-func (s *Step) AllDeps(do func(s *Step)) (n int) {
+func (s *Step) AllPrereqs(do func(s *Step)) (n int) {
 	lsOut := s.inslist
 	var deps, clear islist.List
 	defer func() {
@@ -110,7 +110,7 @@ func (s *Step) AllDeps(do func(s *Step)) (n int) {
 		clear.PushBack(next)
 		do(next)
 		n++
-		for _, d := range next.deps {
+		for _, d := range next.prereqs {
 			if d.inslist == lsOut {
 				deps.PushBack(d)
 				d.inslist = !lsOut
@@ -121,7 +121,7 @@ func (s *Step) AllDeps(do func(s *Step)) (n int) {
 }
 
 func (s *Step) DependsOn(t *Step) bool {
-	for _, d := range s.deps {
+	for _, d := range s.prereqs {
 		if d == t {
 			return true
 		}
@@ -132,7 +132,7 @@ func (s *Step) DependsOn(t *Step) bool {
 func (s *Step) DependOn(ds ...*Step) *Step {
 	for _, d := range ds {
 		if !s.DependsOn(d) {
-			s.deps = append(s.deps, d)
+			s.prereqs = append(s.prereqs, d)
 			d.tgts = append(d.tgts, s) // assumes consistency, no check
 		}
 	}

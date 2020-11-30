@@ -10,7 +10,7 @@ func _() {
 	var x [1]struct{}
 	_ = x[Build-1]
 	_ = x[RootNode-2]
-	_ = x[DepChanged-3]
+	_ = x[PrereqChanged-3]
 }
 
 const _BuildHint_name = "BuildRootNodeDepChanged"

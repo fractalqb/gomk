@@ -16,7 +16,7 @@ type BuildHint int
 const (
 	Build BuildHint = iota + 1
 	RootNode
-	DepChanged
+	PrereqChanged
 )
 
 type Scheduler struct {
@@ -71,9 +71,9 @@ func (sched *Scheduler) Update(s *Step, tag string, hive *Hive) (err error) {
 		nil,
 	)
 	var sheap stepHeap
-	s.AllDeps(func(s *Step) {
+	s.AllPrereqs(func(s *Step) {
 		s.changed = false
-		s.depCount = len(s.deps)
+		s.depCount = len(s.prereqs)
 		s.heapos = len(sheap)
 		sheap = append(sheap, s)
 	})
@@ -93,7 +93,7 @@ func (sched *Scheduler) Make(s *Step, tag string, hive *Hive) (err error) {
 	var sheap stepHeap
 	s.ForEach(func(s *Step) {
 		s.changed = false
-		s.depCount = len(s.deps)
+		s.depCount = len(s.prereqs)
 		s.heapos = len(sheap)
 		sheap = append(sheap, s)
 	})
@@ -201,12 +201,12 @@ func (h *Hive) bee(id int) {
 			err  error
 		)
 		if step.changed {
-			hint = DepChanged
+			hint = PrereqChanged
 			step.changed = false
 		} else if u2d, ok := step.subject.(Artefact); ok {
 			hint, err = u2d.UpToDate(job.step)
 		} else {
-			if len(step.deps) == 0 {
+			if len(step.prereqs) == 0 {
 				hint = RootNode
 			}
 		}

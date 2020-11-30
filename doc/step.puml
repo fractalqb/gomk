@@ -1,0 +1,36 @@
+@startuml
+hide footbox
+
+participant Scheduler as sched
+participant "b: Bee" as bee
+participant "current: Step" as step
+participant "target: Step" as tgt
+
+sched ->> bee: job
+activate bee
+	bee -> step: Is up-to-date?
+	activate step
+	bee <<-- step: hint
+deactivate step
+alt Step is up-to-date
+	sched <<-- bee: up-to-date
+else Step is out-of-date
+	bee -> step: Build(hint)
+	activate step
+	bee <<-- step: has (not) changed
+	deactivate step
+	sched <<-- bee: has (not) changed
+else Must check dependencies
+	sched <<-- bee: Check dependencies
+	note right: all vs. any deps?
+	deactivate bee
+end
+alt current Step changed artefact
+	loop For all targets of step
+	sched -> tgt: dependency changed
+	note right: build hint?
+	end
+else 
+	
+end
+@enduml
