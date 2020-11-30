@@ -1,0 +1,2 @@
+# gomk
+Make things Go
