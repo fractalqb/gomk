@@ -11,13 +11,133 @@ import (
 	"strings"
 )
 
-type Build struct {
-	PrjRoot string
-	env     []string
+type Env struct {
+	parent *Env
+	unset  map[string]bool
+	local  map[string]string
+	cache  []string
 }
 
-func NewBuild(rootDir string) (*Build, error) {
-	os.Environ()
+func NewEnvOS(osenv []string) (*Env, error) {
+	res := new(Env)
+	for _, oe := range osenv {
+		sep := strings.IndexByte(oe, '=')
+		if sep < 0 {
+			return res, fmt.Errorf("invalid os env entry: '%s'", oe)
+		}
+		res.Set(oe[:sep], oe[sep+1:])
+	}
+	return res, nil
+}
+
+func (env *Env) Set(key, val string) {
+	if env.unset != nil {
+		delete(env.unset, key)
+	}
+	if env.local == nil {
+		env.local = make(map[string]string)
+	}
+	env.local[key] = val
+	env.cache = nil
+}
+
+func (env *Env) SetMap(e map[string]string) {
+	for k, v := range e {
+		env.Set(k, v)
+	}
+}
+
+func (env *Env) Unset(keys ...string) {
+	for _, key := range keys {
+		if env.local != nil {
+			delete(env.local, key)
+		}
+		if env.unset == nil {
+			env.unset = make(map[string]bool)
+		}
+		env.unset[key] = true
+	}
+	env.cache = nil
+}
+
+func (env *Env) Get(key string) (string, bool) {
+	for env != nil {
+		if env.unset != nil {
+			if _, ok := env.unset[key]; ok {
+				return "", false
+			}
+		}
+		if env.local != nil {
+			if v, ok := env.local[key]; ok {
+				return v, true
+			}
+		}
+		env = env.parent
+	}
+	return "", false
+}
+
+func (env *Env) CmdEnv() []string {
+	if env.cache == nil {
+		if env.parent == nil && env.unset == nil && env.local == nil {
+			return nil
+		}
+		merged := make(map[string]string)
+		env.merge(merged)
+		env.cache = make([]string, 0, len(merged))
+		var sb strings.Builder
+		for k, v := range merged {
+			sb.Reset()
+			sb.WriteString(k)
+			sb.WriteByte('=')
+			sb.WriteString(v)
+			env.cache = append(env.cache, sb.String())
+		}
+	}
+	return env.cache
+}
+
+func (env *Env) merge(m map[string]string) {
+	if env.parent != nil {
+		env.parent.merge(m)
+	}
+	if env.unset != nil {
+		for k, _ := range env.unset {
+			delete(m, k)
+		}
+	}
+	if env.local != nil {
+		for k, v := range env.local {
+			m[k] = v
+		}
+	}
+}
+
+func (env *Env) New() *Env { return &Env{parent: env} }
+
+func (env *Env) Push() {
+	tmp := new(Env)
+	*tmp = *env
+	env.parent = tmp
+	env.unset = nil
+	env.local = nil
+	env.cache = nil
+}
+
+func (env *Env) Pop() bool {
+	if env.parent == nil {
+		return false
+	}
+	*env = *env.parent
+	return true
+}
+
+type Build struct {
+	PrjRoot string
+	Env     Env
+}
+
+func NewBuild(rootDir string, osEnv []string) (*Build, error) {
 	res := &Build{
 		PrjRoot: rootDir,
 	}
@@ -27,35 +147,27 @@ func NewBuild(rootDir string) (*Build, error) {
 			return nil, err
 		}
 	}
+	if osEnv != nil {
+		oe, err := NewEnvOS(osEnv)
+		if err != nil {
+			return nil, err
+		}
+		res.Env = *oe
+	}
 	return res, nil
 }
-
-// func (b *Build) senv(key, val string) {
-// 	prefix := key + "="
-// 	for i, e := range b.env {
-// 		if strings.HasPrefix(e, prefix) {
-// 			b.env[i] = prefix + val
-// 			return
-// 		}
-// 	}
-// 	b.env = append(b.env, prefix+val)
-// }
-
-// func (b *Build) uenv(key string) {
-// 	prefix := key + "="
-// 	for i, e := range b.env {
-// 		if strings.HasPrefix(e, prefix) {
-// 			copy(b.env[i:], b.env[i+1:])
-// 			b.env = b.env[:len(b.env)-1]
-// 			return
-// 		}
-// 	}
-// }
 
 func (b *Build) WDir() *WDir {
 	res := &WDir{b: b, dir: b.PrjRoot}
 	res.pre = res
 	return res
+}
+
+func (b *Build) WithEnv(change func(*Env), do func()) {
+	b.Env.Push()
+	defer b.Env.Pop()
+	change(&b.Env)
+	do()
 }
 
 type WDir struct {
@@ -113,7 +225,7 @@ func (d *WDir) Exec(exe string, args ...string) {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = d.b.env
+	cmd.Env = d.b.Env.CmdEnv()
 	if err := cmd.Run(); err != nil {
 		panic(err)
 	}
@@ -141,7 +253,7 @@ func (d *WDir) ExecPipe(cmds ...*exec.Cmd) {
 	for i, cmd := range cmds {
 		cmd.Dir = d.dir
 		cmd.Stderr = os.Stderr
-		cmd.Env = d.b.env
+		cmd.Env = d.b.Env.CmdEnv()
 		if i > 0 {
 			pr, pw := io.Pipe()
 			pipew = append(pipew, pw)
