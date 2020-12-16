@@ -157,6 +157,14 @@ func NewBuild(rootDir string, osEnv []string) (*Build, error) {
 	return res, nil
 }
 
+func MustNewBuild(rootDir string, osEnv []string) *Build {
+	res, err := NewBuild(rootDir, osEnv)
+	if err != nil {
+		panic(err)
+	}
+	return res
+}
+
 func (b *Build) WDir() *WDir {
 	res := &WDir{b: b, dir: b.PrjRoot}
 	res.pre = res
