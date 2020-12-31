@@ -184,10 +184,12 @@ type WDir struct {
 	dir string
 }
 
-func (d *WDir) String() string {
+func (d *WDir) Build() *Build { return d.b }
+
+func (d *WDir) Rel() string {
 	res := d.dir[len(d.b.PrjRoot):]
 	if res == "" {
-		return "/"
+		return "."
 	}
 	return res
 }
@@ -206,13 +208,13 @@ func (d *WDir) Cd(dirs ...string) *WDir {
 func (d *WDir) Back() *WDir { return d.pre }
 
 func (d *WDir) Do(what string, f func(dir *WDir)) {
-	log.Printf("do in %s: %s\n", d, what)
+	log.Printf("do in %s: %s\n", d.Rel(), what)
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d, what, p)
+			log.Printf("failed in %s with %s: %s", d.Rel(), what, p)
 			panic(p)
 		} else {
-			log.Printf("done in %s with %s", d, what)
+			log.Printf("done in %s with %s", d.Rel(), what)
 		}
 	}()
 	f(d)
@@ -220,13 +222,13 @@ func (d *WDir) Do(what string, f func(dir *WDir)) {
 
 func (d *WDir) Exec(exe string, args ...string) {
 	cmd := exec.Command(exe, args...)
-	log.Printf("exec in %s: %s\n", d, cmd)
+	log.Printf("exec in %s: %s\n", d.Rel(), cmd)
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d, cmd, p)
+			log.Printf("failed in %s with %s: %s", d.Rel(), cmd, p)
 			panic(p)
 		} else {
-			log.Printf("done in %s with %s", d, cmd)
+			log.Printf("done in %s with %s", d.Rel(), cmd)
 		}
 	}()
 	cmd.Dir = d.dir
@@ -271,13 +273,13 @@ func (d *WDir) ExecPipe(cmds ...*exec.Cmd) {
 		}
 		fmt.Fprint(&sb, cmd.String())
 	}
-	log.Printf("pipe in %s: %s\n", d, sb.String())
+	log.Printf("pipe in %s: %s\n", d.Rel(), sb.String())
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d, sb.String(), p)
+			log.Printf("failed in %s with %s: %s", d.Rel(), sb.String(), p)
 			panic(p)
 		} else {
-			log.Printf("done in %s with %s", d, sb.String())
+			log.Printf("done in %s with %s", d.Rel(), sb.String())
 		}
 	}()
 	cmds[0].Stdin = os.Stdin
