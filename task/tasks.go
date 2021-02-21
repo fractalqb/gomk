@@ -34,7 +34,11 @@ func GetVersioner(build *gomk.Build) {
 }
 
 func DepsGraph(build *gomk.Build) {
-	err := MkGetTool(build, "modgraphviz", "golang.org/x/exp/cmd/modgraphviz")
+	// const tool = "modgraphviz"
+	// const tookpkg = "golang.org/x/exp/cmd/"+tool
+	const tool = "gomodot"
+	const tookpkg = "codeberg.org/fractalqb/" + tool
+	err := MkGetTool(build, tool, tookpkg)
 	if err != nil {
 		panic(err)
 	}
@@ -43,7 +47,7 @@ func DepsGraph(build *gomk.Build) {
 	}, func() {
 		build.WDir().ExecPipe(
 			exec.Command("go", "mod", "graph"),
-			exec.Command("modgraphviz"),
+			exec.Command(tool),
 			exec.Command("dot", "-Tsvg", "-o", "depgraph.svg"),
 		)
 	})
