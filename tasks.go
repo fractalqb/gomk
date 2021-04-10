@@ -27,7 +27,9 @@ func (ts Tasks) Run(task string, dir *WDir) {
 	for _, b := range t.before {
 		ts.Run(b, dir)
 	}
-	t.do(dir)
+	if t.do != nil {
+		t.do(dir)
+	}
 }
 
 type taskdef struct {
