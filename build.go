@@ -220,7 +220,7 @@ func (d *WDir) Do(what string, f func(dir *WDir)) {
 	f(d)
 }
 
-func (d *WDir) Exec(exe string, args ...string) {
+func (d *WDir) Exec(out io.Writer, exe string, args ...string) {
 	cmd := exec.Command(exe, args...)
 	log.Printf("exec in %s: %s\n", d.Rel(), cmd)
 	defer func() {
@@ -233,12 +233,26 @@ func (d *WDir) Exec(exe string, args ...string) {
 	}()
 	cmd.Dir = d.dir
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
+	if out == nil {
+		cmd.Stdout = os.Stdout
+	} else {
+		cmd.Stdout = out
+	}
 	cmd.Stderr = os.Stderr
 	cmd.Env = d.b.Env.CmdEnv()
 	if err := cmd.Run(); err != nil {
 		panic(err)
 	}
+}
+
+func (d *WDir) ExecOut(file string, exe string, args ...string) {
+	wr, err := os.Create(file)
+	if err != nil {
+		panic(err)
+	}
+	defer wr.Close()
+	log.Printf("capture next output to %s", file)
+	d.Exec(wr, exe, args...)
 }
 
 type PipeError struct {
@@ -253,7 +267,17 @@ func (pe PipeError) Error() string {
 	return fmt.Sprintf("%s [%s]: %s", pe.act, pe.cmd, pe.err)
 }
 
-func (d *WDir) ExecPipe(cmds ...*exec.Cmd) {
+func (d *WDir) ExecPipeOut(file string, cmds ...*exec.Cmd) {
+	wr, err := os.Create(file)
+	if err != nil {
+		panic(err)
+	}
+	defer wr.Close()
+	log.Printf("capture next output to %s", file)
+	d.ExecPipe(wr, cmds...)
+}
+
+func (d *WDir) ExecPipe(out io.Writer, cmds ...*exec.Cmd) {
 	var sb strings.Builder
 	l := len(cmds)
 	if l == 0 {
@@ -283,7 +307,11 @@ func (d *WDir) ExecPipe(cmds ...*exec.Cmd) {
 		}
 	}()
 	cmds[0].Stdin = os.Stdin
-	cmds[l-1].Stdout = os.Stdout
+	if out == nil {
+		cmds[l-1].Stdout = os.Stdout
+	} else {
+		cmds[l-1].Stdout = out
+	}
 	for _, cmd := range cmds {
 		if err := cmd.Start(); err != nil {
 			panic(PipeError{act: "start", cmd: cmd, err: err})

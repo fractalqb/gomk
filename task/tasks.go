@@ -1,6 +1,7 @@
 package task
 
 import (
+	"log"
 	"os/exec"
 
 	"git.fractalqb.de/fractalqb/gomk"
@@ -14,7 +15,8 @@ func MkGetTool(build *gomk.Build, exe, repo string) error {
 	build.WithEnv(func(e *gomk.Env) {
 		e.Set("GO111MODULE", "on")
 	}, func() {
-		build.WDir().Exec("go", "get", "-u", repo)
+		log.Printf("go get %s", repo)
+		build.WDir().Exec(nil, "go", "get", "-u", repo)
 	})
 	return nil
 }
@@ -45,7 +47,7 @@ func DepsGraph(build *gomk.Build) {
 	build.WithEnv(func(e *gomk.Env) {
 		e.Set("GO111MODULE", "on")
 	}, func() {
-		build.WDir().ExecPipe(
+		build.WDir().ExecPipe(nil,
 			exec.Command("go", "mod", "graph"),
 			exec.Command(tool),
 			exec.Command("dot", "-Tsvg", "-o", "depgraph.svg"),
