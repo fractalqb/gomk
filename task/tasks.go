@@ -16,7 +16,7 @@ func MkGetTool(build *gomk.Build, exe, repo string) error {
 		e.Set("GO111MODULE", "on")
 	}, func() {
 		log.Printf("go get %s", repo)
-		build.WDir().Exec(nil, "go", "get", "-u", repo)
+		gomk.ExecOut(build.WDir(), nil, "go", "get", "-u", repo)
 	})
 	return nil
 }
@@ -47,10 +47,10 @@ func DepsGraph(build *gomk.Build) {
 	build.WithEnv(func(e *gomk.Env) {
 		e.Set("GO111MODULE", "on")
 	}, func() {
-		build.WDir().ExecPipe(nil,
+		gomk.NewPipe(
 			exec.Command("go", "mod", "graph"),
 			exec.Command(tool),
 			exec.Command("dot", "-Tsvg", "-o", "depgraph.svg"),
-		)
+		).Exec(build.WDir())
 	})
 }

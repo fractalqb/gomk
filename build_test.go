@@ -2,6 +2,7 @@ package gomk
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 )
 
@@ -17,7 +18,9 @@ func ExampleEnv() {
 	e.Set("KEY1", "Just a value")
 	fmt.Println(e.CmdEnv())
 	e.Set("KEY2", "Yet another value")
-	fmt.Println(e.CmdEnv())
+	env := e.CmdEnv()
+	sort.Strings(env)
+	fmt.Println(env)
 	fmt.Println(e.Get("KEY1"))
 	e.Unset("KEY1")
 	fmt.Println(e.CmdEnv())

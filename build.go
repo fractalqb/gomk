@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Env struct {
@@ -137,16 +138,17 @@ type Build struct {
 	Env     Env
 }
 
-func NewBuild(rootDir string, osEnv []string) (*Build, error) {
-	res := &Build{
-		PrjRoot: rootDir,
-	}
-	if res.PrjRoot == "" {
-		var err error
-		if res.PrjRoot, err = os.Getwd(); err != nil {
+func NewBuild(rootDir string, osEnv []string) (res *Build, err error) {
+	if rootDir == "" {
+		if rootDir, err = os.Getwd(); err != nil {
+			return nil, err
+		}
+	} else if !filepath.IsAbs(rootDir) {
+		if rootDir, err = filepath.Abs(rootDir); err != nil {
 			return nil, err
 		}
 	}
+	res = &Build{PrjRoot: rootDir}
 	if osEnv != nil {
 		oe, err := NewEnvOS(osEnv)
 		if err != nil {
@@ -171,161 +173,15 @@ func (b *Build) WDir() *WDir {
 	return res
 }
 
+func (b *Build) Rel(path string) (string, error) {
+	return filepath.Rel(b.PrjRoot, path)
+}
+
 func (b *Build) WithEnv(change func(*Env), do func()) {
 	b.Env.Push()
 	defer b.Env.Pop()
 	change(&b.Env)
 	do()
-}
-
-type WDir struct {
-	b   *Build
-	pre *WDir
-	dir string
-}
-
-func (d *WDir) Build() *Build { return d.b }
-
-func (d *WDir) Rel() string {
-	res := d.dir[len(d.b.PrjRoot):]
-	if res == "" {
-		return "."
-	}
-	return res
-}
-
-func (d *WDir) Cd(dirs ...string) *WDir {
-	tmp := make([]string, len(dirs)+1)
-	tmp[0] = d.dir
-	copy(tmp[1:], dirs)
-	return &WDir{
-		b:   d.b,
-		pre: d,
-		dir: filepath.Join(tmp...),
-	}
-}
-
-func (d *WDir) Back() *WDir { return d.pre }
-
-func (d *WDir) Do(what string, f func(dir *WDir)) {
-	log.Printf("do in %s: %s\n", d.Rel(), what)
-	defer func() {
-		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d.Rel(), what, p)
-			panic(p)
-		} else {
-			log.Printf("done in %s with %s", d.Rel(), what)
-		}
-	}()
-	f(d)
-}
-
-func (d *WDir) Exec(out io.Writer, exe string, args ...string) {
-	cmd := exec.Command(exe, args...)
-	log.Printf("exec in %s: %s\n", d.Rel(), cmd)
-	defer func() {
-		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d.Rel(), cmd, p)
-			panic(p)
-		} else {
-			log.Printf("done in %s with %s", d.Rel(), cmd)
-		}
-	}()
-	cmd.Dir = d.dir
-	cmd.Stdin = os.Stdin
-	if out == nil {
-		cmd.Stdout = os.Stdout
-	} else {
-		cmd.Stdout = out
-	}
-	cmd.Stderr = os.Stderr
-	cmd.Env = d.b.Env.CmdEnv()
-	if err := cmd.Run(); err != nil {
-		panic(err)
-	}
-}
-
-func (d *WDir) ExecOut(file string, exe string, args ...string) {
-	wr, err := os.Create(file)
-	if err != nil {
-		panic(err)
-	}
-	defer wr.Close()
-	log.Printf("capture next output to %s", file)
-	d.Exec(wr, exe, args...)
-}
-
-type PipeError struct {
-	act string
-	cmd *exec.Cmd
-	err error
-}
-
-func (pe PipeError) Unwrap() error { return pe.err }
-
-func (pe PipeError) Error() string {
-	return fmt.Sprintf("%s [%s]: %s", pe.act, pe.cmd, pe.err)
-}
-
-func (d *WDir) ExecPipeOut(file string, cmds ...*exec.Cmd) {
-	wr, err := os.Create(file)
-	if err != nil {
-		panic(err)
-	}
-	defer wr.Close()
-	log.Printf("capture next output to %s", file)
-	d.ExecPipe(wr, cmds...)
-}
-
-func (d *WDir) ExecPipe(out io.Writer, cmds ...*exec.Cmd) {
-	var sb strings.Builder
-	l := len(cmds)
-	if l == 0 {
-		return
-	}
-	pipew := make([]*io.PipeWriter, 0, l-1)
-	for i, cmd := range cmds {
-		cmd.Dir = d.dir
-		cmd.Stderr = os.Stderr
-		cmd.Env = d.b.Env.CmdEnv()
-		if i > 0 {
-			pr, pw := io.Pipe()
-			pipew = append(pipew, pw)
-			cmds[i-1].Stdout = pw
-			cmd.Stdin = pr
-			sb.WriteString(" | ")
-		}
-		fmt.Fprint(&sb, cmd.String())
-	}
-	log.Printf("pipe in %s: %s\n", d.Rel(), sb.String())
-	defer func() {
-		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d.Rel(), sb.String(), p)
-			panic(p)
-		} else {
-			log.Printf("done in %s with %s", d.Rel(), sb.String())
-		}
-	}()
-	cmds[0].Stdin = os.Stdin
-	if out == nil {
-		cmds[l-1].Stdout = os.Stdout
-	} else {
-		cmds[l-1].Stdout = out
-	}
-	for _, cmd := range cmds {
-		if err := cmd.Start(); err != nil {
-			panic(PipeError{act: "start", cmd: cmd, err: err})
-		}
-	}
-	for i, cmd := range cmds {
-		if err := cmd.Wait(); err != nil {
-			// TODO what about the rest .Wait() ?
-			panic(PipeError{act: "wait", cmd: cmd, err: err})
-		}
-		if i < len(pipew) {
-			pipew[i].Close()
-		}
-	}
 }
 
 func Try(f func()) (err error) {
@@ -343,4 +199,168 @@ func Try(f func()) (err error) {
 	}()
 	f()
 	return nil
+}
+
+func Step(d *WDir, what string, f func(dir *WDir)) {
+	log.Printf("do in %s: %s\n", d.MustRel(""), what)
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("failed in %s with %s: %s", d.MustRel(""), what, p)
+			panic(p)
+		} else {
+			log.Printf("done in %s with %s", d.MustRel(""), what)
+		}
+	}()
+	f(d)
+}
+
+func Exec(d *WDir, exe string, args ...string) {
+	ExecOut(d, nil, exe, args...)
+}
+
+func ExecOut(d *WDir, out io.Writer, exe string, args ...string) {
+	cmd := exec.Command(exe, args...)
+	log.Printf("exec in %s: %s\n", d.MustRel(""), cmd)
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("failed in %s with %s: %s", d.MustRel(""), cmd, p)
+			panic(p)
+		} else {
+			log.Printf("done in %s with %s", d.MustRel(""), cmd)
+		}
+	}()
+	cmd.Dir = d.dir
+	cmd.Stdin = os.Stdin
+	if out == nil {
+		cmd.Stdout = os.Stdout
+	} else {
+		cmd.Stdout = out
+	}
+	cmd.Stderr = os.Stderr
+	cmd.Env = d.b.Env.CmdEnv()
+	if err := cmd.Run(); err != nil {
+		panic(err)
+	}
+}
+
+func ExecFile(d *WDir, file string, exe string, args ...string) {
+	wr, err := os.Create(d.Join(file))
+	if err != nil {
+		panic(err)
+	}
+	defer wr.Close()
+	log.Printf("capture exec output to %s", file)
+	ExecOut(d, wr, exe, args...)
+}
+
+type PipeError struct {
+	act string
+	cmd *exec.Cmd
+	err error
+}
+
+func (pe PipeError) Unwrap() error { return pe.err }
+
+func (pe PipeError) Error() string {
+	return fmt.Sprintf("%s [%s]: %s", pe.act, pe.cmd, pe.err)
+}
+
+type Pipe struct {
+	Cmds []*exec.Cmd
+	Out  io.Writer
+}
+
+func NewPipe(cmds ...*exec.Cmd) *Pipe {
+	return &Pipe{Cmds: cmds}
+}
+
+func (p Pipe) ExceFile(d *WDir, file string) {
+	wr, err := os.Create(d.Join(file))
+	if err != nil {
+		panic(err)
+	}
+	defer wr.Close()
+	log.Printf("capture next output to %s", file)
+	p.Out = wr
+	p.Exec(d)
+}
+
+func (p Pipe) Exec(d *WDir) {
+	var sb strings.Builder
+	l := len(p.Cmds)
+	if l == 0 {
+		return
+	}
+	pipew := make([]*io.PipeWriter, 0, l-1)
+	for i, cmd := range p.Cmds {
+		cmd.Dir = d.dir
+		cmd.Stderr = os.Stderr
+		cmd.Env = d.b.Env.CmdEnv()
+		if i > 0 {
+			pr, pw := io.Pipe()
+			pipew = append(pipew, pw)
+			p.Cmds[i-1].Stdout = pw
+			cmd.Stdin = pr
+			sb.WriteString(" | ")
+		}
+		fmt.Fprint(&sb, cmd.String())
+	}
+	log.Printf("pipe in %s: %s\n", d.MustRel(""), sb.String())
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("failed in %s with %s: %s", d.MustRel(""), sb.String(), p)
+			panic(p)
+		} else {
+			log.Printf("done in %s with %s", d.MustRel(""), sb.String())
+		}
+	}()
+	p.Cmds[0].Stdin = os.Stdin
+	if p.Out == nil {
+		p.Cmds[l-1].Stdout = os.Stdout
+	} else {
+		p.Cmds[l-1].Stdout = p.Out
+	}
+	for _, cmd := range p.Cmds {
+		if err := cmd.Start(); err != nil {
+			panic(PipeError{act: "start", cmd: cmd, err: err})
+		}
+	}
+	for i, cmd := range p.Cmds {
+		if err := cmd.Wait(); err != nil {
+			// TODO what about the rest .Wait() ?
+			panic(PipeError{act: "wait", cmd: cmd, err: err})
+		}
+		if i < len(pipew) {
+			pipew[i].Close()
+		}
+	}
+
+}
+
+func Update(d *WDir, target string, do func(newer []string) (int, error), deps ...string) (int, error) {
+	var ttime time.Time
+	if stat, err := os.Stat(d.Join(target)); os.IsNotExist(err) {
+		n, err := do(deps)
+		if n < 0 && err == nil {
+			n = len(deps)
+		}
+		return n, err
+	} else if err != nil {
+		return -1, err
+	} else {
+		ttime = stat.ModTime()
+	}
+	var newer []string
+	for _, dep := range deps {
+		if stat, err := os.Stat(d.Join(dep)); err != nil {
+			return -1, err
+		} else if ttime.Before(stat.ModTime()) {
+			newer = append(newer, dep)
+		}
+	}
+	n, err := do(newer)
+	if n < 0 && err == nil {
+		n = len(newer)
+	}
+	return n, err
 }
