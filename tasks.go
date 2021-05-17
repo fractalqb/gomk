@@ -37,6 +37,14 @@ func (ts Tasks) List() []string {
 }
 
 func (ts Tasks) Fprint(wr io.Writer, prefix string) {
+	targetsof := make(map[string][]string)
+	for n, t := range ts {
+		for _, b := range t.before {
+			ts := targetsof[b]
+			ts = append(ts, n)
+			targetsof[b] = ts
+		}
+	}
 	twr, ok := wr.(*tabwriter.Writer)
 	if !ok {
 		twr = tabwriter.NewWriter(wr,
@@ -45,8 +53,25 @@ func (ts Tasks) Fprint(wr io.Writer, prefix string) {
 			0,
 		)
 	}
-	for _, t := range ts.List() {
-		fmt.Fprintf(twr, "%s%s\t<- %s\n", prefix, t, ts.Before(t))
+	listed := make(map[string]bool)
+	for len(listed) < len(targetsof) {
+		for n := range ts {
+			if listed[n] {
+				continue
+			}
+			nts := targetsof[n]
+			lno := 0
+			for _, t := range nts {
+				if listed[t] {
+					lno++
+				}
+			}
+			if lno == len(nts) {
+				t := ts[n]
+				fmt.Fprintf(twr, "%s%s\t< %s\n", prefix, n, t.before)
+				listed[n] = true
+			}
+		}
 	}
 	twr.Flush()
 }

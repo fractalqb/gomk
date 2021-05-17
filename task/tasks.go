@@ -7,10 +7,11 @@ import (
 	"git.fractalqb.de/fractalqb/gomk"
 )
 
-func MkGetTool(build *gomk.Build, exe, repo string) error {
-	_, err := exec.LookPath(exe)
-	if err == nil {
-		return err
+func MkGetTool(build *gomk.Build, update bool, exe, repo string) error {
+	if !update {
+		if _, err := exec.LookPath(exe); err == nil {
+			return err
+		}
 	}
 	build.WithEnv(func(e *gomk.Env) {
 		e.Set("GO111MODULE", "on")
@@ -21,26 +22,26 @@ func MkGetTool(build *gomk.Build, exe, repo string) error {
 	return nil
 }
 
-func GetStringer(build *gomk.Build) {
-	err := MkGetTool(build, "stringer", "golang.org/x/tools/cmd/stringer")
+func GetStringer(build *gomk.Build, update bool) {
+	err := MkGetTool(build, update, "stringer", "golang.org/x/tools/cmd/stringer")
 	if err != nil {
 		panic(err)
 	}
 }
 
-func GetVersioner(build *gomk.Build) {
-	err := MkGetTool(build, "versioner", "git.fractalqb.de/fractalqb/pack/versioner")
+func GetVersioner(build *gomk.Build, update bool) {
+	err := MkGetTool(build, update, "versioner", "git.fractalqb.de/fractalqb/pack/versioner")
 	if err != nil {
 		panic(err)
 	}
 }
 
-func DepsGraph(build *gomk.Build) {
+func DepsGraph(build *gomk.Build, update bool) {
 	// const tool = "modgraphviz"
 	// const tookpkg = "golang.org/x/exp/cmd/"+tool
 	const tool = "gomodot"
 	const tookpkg = "codeberg.org/fractalqb/" + tool
-	err := MkGetTool(build, tool, tookpkg)
+	err := MkGetTool(build, update, tool, tookpkg)
 	if err != nil {
 		panic(err)
 	}
