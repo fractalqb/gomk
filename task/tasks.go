@@ -41,13 +41,13 @@ func DepsGraph(build *gomk.Build, update bool) {
 	// const tookpkg = "golang.org/x/exp/cmd/"+tool
 	const tool = "gomodot"
 	const tookpkg = "codeberg.org/fractalqb/" + tool
-	err := MkGetTool(build, update, tool, tookpkg)
-	if err != nil {
-		panic(err)
-	}
 	build.WithEnv(func(e *gomk.Env) {
 		e.Set("GO111MODULE", "on")
 	}, func() {
+		err := MkGetTool(build, update, tool, tookpkg)
+		if err != nil {
+			panic(err)
+		}
 		gomk.NewPipe(
 			exec.Command("go", "mod", "graph"),
 			exec.Command(tool),

@@ -38,6 +38,9 @@ func (ts Tasks) List() []string {
 
 func (ts Tasks) Fprint(wr io.Writer, prefix string) {
 	targetsof := make(map[string][]string)
+	for n := range ts {
+		targetsof[n] = []string{}
+	}
 	for n, t := range ts {
 		for _, b := range t.before {
 			ts := targetsof[b]

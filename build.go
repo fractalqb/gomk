@@ -226,7 +226,7 @@ func ExecOut(d *WDir, out io.Writer, exe string, args ...string) {
 			log.Printf("failed in %s with %s: %s", d.MustRel(""), cmd, p)
 			panic(p)
 		} else {
-			log.Printf("done in %s with %s", d.MustRel(""), cmd)
+			log.Printf("done in %s with: %s", d.MustRel(""), cmd)
 		}
 	}()
 	cmd.Dir = d.dir

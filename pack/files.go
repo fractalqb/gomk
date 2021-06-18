@@ -9,6 +9,8 @@ import (
 
 type OsDepNames = pk.OsDepNames
 
+var OsDepExe = pk.OsDepExe
+
 func CopyFile(dir *gomk.WDir, dst, src string, osdn OsDepNames) error {
 	dst = dir.Join(dst)
 	src = dir.Join(src)
@@ -33,22 +35,24 @@ func CopyToDir(dir *gomk.WDir, dst string, osdn OsDepNames, files ...string) err
 // ) error {
 // }
 
-// TODO NYI
-// func CopyRecursive(
-// 	dir *gomk.WDir,
-// 	dst, src string,
-// 	filter func(dir string, info os.FileInfo) bool,
-// 	osdn OsDepNames,
-// ) error {
-// }
+func CopyRecursive(
+	dir *gomk.WDir,
+	dst, src string,
+	filter func(dir string, info os.FileInfo) bool,
+	osdn OsDepNames,
+) error {
+	dst = dir.Join(dst)
+	src = dir.Join(src)
+	return pk.CopyRecursive(dst, src, filter, osdn)
+}
 
 func CopyTree(
 	dir *gomk.WDir,
 	dst, src string,
-	osdn OsDepNames,
 	filter func(dir string, info os.FileInfo) bool,
+	osdn OsDepNames,
 ) error {
 	dst = dir.Join(dst)
 	src = dir.Join(src)
-	return pk.CopyTree(dst, src, osdn, filter)
+	return pk.CopyTree(dst, src, filter, osdn)
 }
