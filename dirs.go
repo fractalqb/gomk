@@ -16,13 +16,14 @@ func (d *WDir) Join(elem ...string) string {
 	return filepath.Join(append([]string{d.dir}, elem...)...)
 }
 
+// Rel makes path relative to current build's root.
 func (d *WDir) Rel(elem ...string) (string, error) {
 	tmp := d.Join(elem...)
 	return d.Build().Rel(tmp)
 }
 
-func (d *WDir) MustRel(path string) string {
-	res, err := d.Rel(path)
+func (d *WDir) MustRel(path ...string) string {
+	res, err := d.Rel(path...)
 	if err != nil {
 		panic(err)
 	}

@@ -173,6 +173,7 @@ func (b *Build) WDir() *WDir {
 	return res
 }
 
+// Rel makes path relative to current build's root.
 func (b *Build) Rel(path string) (string, error) {
 	return filepath.Rel(b.PrjRoot, path)
 }
@@ -202,13 +203,13 @@ func Try(f func()) (err error) {
 }
 
 func Step(d *WDir, what string, f func(dir *WDir)) {
-	log.Printf("do in %s: %s\n", d.MustRel(""), what)
+	log.Printf("do in %s: %s\n", d.MustRel(), what)
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d.MustRel(""), what, p)
+			log.Printf("failed in %s with %s: %s", d.MustRel(), what, p)
 			panic(p)
 		} else {
-			log.Printf("done in %s with %s", d.MustRel(""), what)
+			log.Printf("done in %s with %s", d.MustRel(), what)
 		}
 	}()
 	f(d)
@@ -220,13 +221,13 @@ func Exec(d *WDir, exe string, args ...string) {
 
 func ExecOut(d *WDir, out io.Writer, exe string, args ...string) {
 	cmd := exec.Command(exe, args...)
-	log.Printf("exec in %s: %s\n", d.MustRel(""), cmd)
+	log.Printf("exec in %s: %s\n", d.MustRel(), cmd)
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d.MustRel(""), cmd, p)
+			log.Printf("failed in %s with %s: %s", d.MustRel(), cmd, p)
 			panic(p)
 		} else {
-			log.Printf("done in %s with: %s", d.MustRel(""), cmd)
+			log.Printf("done in %s with: %s", d.MustRel(), cmd)
 		}
 	}()
 	cmd.Dir = d.dir
@@ -305,13 +306,13 @@ func (p Pipe) Exec(d *WDir) {
 		}
 		fmt.Fprint(&sb, cmd.String())
 	}
-	log.Printf("pipe in %s: %s\n", d.MustRel(""), sb.String())
+	log.Printf("pipe in %s: %s\n", d.MustRel(), sb.String())
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("failed in %s with %s: %s", d.MustRel(""), sb.String(), p)
+			log.Printf("failed in %s with %s: %s", d.MustRel(), sb.String(), p)
 			panic(p)
 		} else {
-			log.Printf("done in %s with %s", d.MustRel(""), sb.String())
+			log.Printf("done in %s with %s", d.MustRel(), sb.String())
 		}
 	}()
 	p.Cmds[0].Stdin = os.Stdin
