@@ -11,19 +11,18 @@ type OsDepNames = pk.OsDepNames
 
 var OsDepExe = pk.OsDepExe
 
-func CopyFile(dir *gomk.WDir, dst, src string, osdn OsDepNames) error {
-	dst = dir.Join(dst)
-	src = dir.Join(src)
-	return pk.CopyFile(dst, src, osdn)
+func CopyFile(dir *gomk.Dir, dst, src string, osdn OsDepNames) error {
+	ddir := dir.Join(dst)
+	sdir := dir.Join(src)
+	return pk.CopyFile(ddir.Abs(), sdir.Abs(), osdn)
 }
 
-func CopyToDir(dir *gomk.WDir, dst string, osdn OsDepNames, files ...string) error {
-	dst = dir.Join(dst)
+func CopyToDir(dir *gomk.Dir, dst string, osdn OsDepNames, files ...string) error {
 	fls := make([]string, 0, len(files))
 	for _, f := range files {
-		fls = append(fls, dir.Join(f))
+		fls = append(fls, dir.Join(f).Abs())
 	}
-	return pk.CopyToDir(dst, osdn, fls...)
+	return pk.CopyToDir(dir.Join(dst).Abs(), osdn, fls...)
 }
 
 // TODO NYI
@@ -36,23 +35,23 @@ func CopyToDir(dir *gomk.WDir, dst string, osdn OsDepNames, files ...string) err
 // }
 
 func CopyRecursive(
-	dir *gomk.WDir,
+	dir *gomk.Dir,
 	dst, src string,
 	filter func(dir string, info os.FileInfo) bool,
 	osdn OsDepNames,
 ) error {
-	dst = dir.Join(dst)
-	src = dir.Join(src)
-	return pk.CopyRecursive(dst, src, filter, osdn)
+	ddir := dir.Join(dst)
+	sdir := dir.Join(src)
+	return pk.CopyRecursive(ddir.Abs(), sdir.Abs(), filter, osdn)
 }
 
 func CopyTree(
-	dir *gomk.WDir,
+	dir *gomk.Dir,
 	dst, src string,
 	filter func(dir string, info os.FileInfo) bool,
 	osdn OsDepNames,
 ) error {
-	dst = dir.Join(dst)
-	src = dir.Join(src)
-	return pk.CopyTree(dst, src, filter, osdn)
+	ddir := dir.Join(dst)
+	sdir := dir.Join(src)
+	return pk.CopyTree(ddir.Abs(), sdir.Abs(), filter, osdn)
 }
