@@ -81,9 +81,7 @@ func (e *EnvVars) Strings() []string {
 	return e.env
 }
 
-type Cmd = exec.Cmd
-
-func Command(ctx context.Context, name string, arg ...string) *Cmd {
+func Command(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, arg...)
 	if cv := CtxEnv(ctx); cv != nil {
 		cmd.Dir = cv.Dir.Abs()
@@ -116,7 +114,7 @@ type CmdDef struct {
 	Args []string
 }
 
-func CommandDef(ctx context.Context, cmd CmdDef) *Cmd {
+func CommandDef(ctx context.Context, cmd CmdDef) *exec.Cmd {
 	return Command(ctx, cmd.Name, cmd.Args...)
 }
 
