@@ -26,16 +26,30 @@ func NewGetTool(onErr gomk.OnErrFunc, p *gomk.Project, update bool, exe, repo st
 	return t
 }
 
-func NewGetStringer(onErr gomk.OnErrFunc, p *gomk.Project, update bool) gomk.Task {
-	return NewGetTool(onErr, p, update,
-		"stringer",
+func NewGetStringer(onErr gomk.OnErrFunc, p *gomk.Project, as string, update bool) gomk.Task {
+	if as == "" {
+		as = "get-stringer"
+	}
+	return NewGetTool(onErr, p, update, as,
 		"golang.org/x/tools/cmd/stringer@latest",
 	)
 }
 
-func NewGetVersioner(onErr gomk.OnErrFunc, p *gomk.Project, update bool) gomk.Task {
-	return NewGetTool(onErr, p, update,
-		"versioner",
+func NewGetVersioner(onErr gomk.OnErrFunc, p *gomk.Project, as string, update bool) gomk.Task {
+	if as == "" {
+		as = "get-versioner"
+	}
+	return NewGetTool(onErr, p, update, as,
 		"git.fractalqb.de/fractalqb/pack/versioner@latest",
+	)
+}
+
+func NewGetGoVulncheck(onErr gomk.OnErrFunc, p *gomk.Project, as string, update bool) gomk.Task {
+	if as == "" {
+		as = "get-vulncheck"
+	}
+	return NewGetTool(onErr, p, update,
+		"vulncheck",
+		"golang.org/x/vuln/cmd/govulncheck@latest",
 	)
 }
