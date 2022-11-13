@@ -14,7 +14,7 @@ type RunEnv struct {
 	Out, Err io.Writer
 }
 
-func CtxEnv(ctx context.Context) *RunEnv {
+func RunEnvContext(ctx context.Context) *RunEnv {
 	tmp := ctx.Value(ctxValTag{})
 	if tmp == nil {
 		return nil
@@ -38,7 +38,7 @@ func (cv *RunEnv) SetIO(clear bool, in io.Reader, out, err io.Writer) *RunEnv {
 func SubContext(ctx context.Context, joinPath string, envSet map[string]string, envUnset ...string) (
 	context.Context, *RunEnv, error,
 ) {
-	cv := CtxEnv(ctx)
+	cv := RunEnvContext(ctx)
 	if cv == nil {
 		return nil, nil, errors.New("no parent context value")
 	}

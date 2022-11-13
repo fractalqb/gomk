@@ -110,14 +110,14 @@ func (t *NopTask) DependOn(taskname ...string) Task {
 
 type CmdTask struct {
 	TaskBase
-	Command CmdDef
+	Command CommandDef
 }
 
 func NewCmdTask(onErr OnErrFunc, p *Project, name string, cmd string, arg ...string) *CmdTask {
-	return NewCmdDefTask(onErr, p, name, CmdDef{cmd, arg})
+	return NewCmdDefTask(onErr, p, name, CommandDef{cmd, arg})
 }
 
-func NewCmdDefTask(onErr OnErrFunc, p *Project, name string, def CmdDef) *CmdTask {
+func NewCmdDefTask(onErr OnErrFunc, p *Project, name string, def CommandDef) *CmdTask {
 	if _, ok := p.tasks[name]; ok {
 		t := &CmdTask{TaskBase: TaskBase{Err: fmt.Errorf("redefineing task '%s'", name)}}
 		CheckErrState(onErr, t)
@@ -141,7 +141,7 @@ func (t *CmdTask) Run(tenv TaskEnv) error {
 	if err != nil {
 		return err
 	}
-	cmd := CommandDef(ctx, t.Command)
+	cmd := DefinedCommand(ctx, t.Command)
 	TraceStart(tenv.Trace, cv.Dir, cmd)
 	err = cmd.Run()
 	if err != nil {
@@ -169,11 +169,11 @@ func (t *CmdTask) DependOn(taskname ...string) Task {
 
 type PipeTask struct {
 	TaskBase
-	Pipe []CmdDef
+	Pipe []CommandDef
 }
 
 func (t *PipeTask) Run(tenv TaskEnv) error {
-	ctx, cv, err := SubContext(
+	ctx, _, err := SubContext(
 		t.Project().EnvContext(tenv.Ctx),
 		filepath.Join(t.wdir...),
 		t.envSet,
@@ -182,11 +182,10 @@ func (t *PipeTask) Run(tenv TaskEnv) error {
 	if err != nil {
 		return err
 	}
-	p := BuildPipeContext(ctx, cv.In)
+	p := BuildPipe(ctx)
 	for _, cdef := range t.Pipe {
-		p.Command(cv.Err, cdef.Name, cdef.Args...)
+		p.Command(cdef.Name, cdef.Args...)
 	}
-	p.SetStdout(cv.Out)
 	return p.Run()
 }
 

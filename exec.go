@@ -2,16 +2,27 @@ package gomk
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
-func ValidEnvKey(k string) error {
-	if strings.IndexByte(k, '=') >= 0 {
-		return errors.New("env key contains '='")
+// ValidEnvName checks if n is a valid name for an environment variable.
+func ValidEnvName(n string) error {
+	violation := strings.IndexFunc(n, func(r rune) bool {
+		if r == '=' {
+			return true
+		}
+		if unicode.IsSpace(r) {
+			return true
+		}
+		return false
+	})
+	if violation >= 0 {
+		return fmt.Errorf("env key contains '%c'", n[violation])
 	}
 	return nil
 }
@@ -35,7 +46,7 @@ func NewEnvVarsString(init []string) (*EnvVars, error) {
 	for _, str := range init {
 		sep := strings.IndexByte(str, '=')
 		k, v := str[:sep], str[sep+1:]
-		if err := ValidEnvKey(k); err != nil {
+		if err := ValidEnvName(k); err != nil {
 			return nil, err
 		}
 		env.kvm[k] = v
@@ -83,7 +94,7 @@ func (e *EnvVars) Strings() []string {
 
 func Command(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, arg...)
-	if cv := CtxEnv(ctx); cv != nil {
+	if cv := RunEnvContext(ctx); cv != nil {
 		cmd.Dir = cv.Dir.Abs()
 		cmd.Env = cv.Env.Strings()
 		if cv.In == nil {
@@ -109,19 +120,19 @@ func Command(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	return cmd
 }
 
-type CmdDef struct {
+type CommandDef struct {
 	Name string
 	Args []string
 }
 
-func CommandDef(ctx context.Context, cmd CmdDef) *exec.Cmd {
+func DefinedCommand(ctx context.Context, cmd CommandDef) *exec.Cmd {
 	return Command(ctx, cmd.Name, cmd.Args...)
 }
 
 type Pipe struct {
 	ctx   context.Context
+	env   *RunEnv
 	cmds  []*exec.Cmd
-	stdin io.Reader
 	pipes []piperw
 }
 
@@ -130,24 +141,13 @@ type piperw struct {
 	w *io.PipeWriter
 }
 
-func BuildPipeContext(ctx context.Context, stdin io.Reader) *Pipe {
-	return &Pipe{ctx: ctx, stdin: stdin}
+func BuildPipe(ctx context.Context) *Pipe {
+	return &Pipe{ctx: ctx, env: RunEnvContext(ctx)}
 }
 
-func (p *Pipe) Command(stderr io.Writer, name string, arg ...string) *Pipe {
+func (p *Pipe) Command(name string, arg ...string) *Pipe {
 	cmd := Command(p.ctx, name, arg...)
 	p.cmds = append(p.cmds, cmd)
-	if len(p.cmds) == 1 {
-		cmd.Stdin = p.stdin
-	}
-	cmd.Stderr = stderr
-	return p
-}
-
-func (p *Pipe) SetStdout(w io.Writer) *Pipe {
-	if len(p.cmds) > 0 {
-		p.cmds[len(p.cmds)-1].Stdout = w
-	}
 	return p
 }
 

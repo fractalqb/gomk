@@ -11,10 +11,10 @@ func Build(p *Project, task string) error {
 		Trace: LogTracer,
 	}
 	done := make(map[string]error)
-	return bld(env, done, p, task)
+	return build(env, done, p, task)
 }
 
-func bld(env TaskEnv, done map[string]error, p *Project, task string) error {
+func build(env TaskEnv, done map[string]error, p *Project, task string) error {
 	if err, ok := done[task]; ok {
 		return err
 	}
@@ -23,7 +23,7 @@ func bld(env TaskEnv, done map[string]error, p *Project, task string) error {
 		return fmt.Errorf("no task '%s' in project '%s'", task, p.Name())
 	}
 	for _, b := range t.DependsOn() {
-		if err := bld(env, done, p, b); err != nil {
+		if err := build(env, done, p, b); err != nil {
 			return err
 		}
 	}
