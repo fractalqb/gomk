@@ -1,6 +1,7 @@
 package gomk
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,9 +9,6 @@ import (
 	"reflect"
 	"sync"
 	"time"
-
-	"git.fractalqb.de/fractalqb/eloc"
-	"git.fractalqb.de/fractalqb/eloc/must"
 )
 
 type Project struct {
@@ -102,9 +100,24 @@ func (prj *Project) Roots() (rs []*Goal) {
 	return rs
 }
 
-func (prj *Project) WriteDot(w io.Writer) (err error) {
-	eloc.RecoverAs(&err)
-	must.Ret(fmt.Fprintf(w, "digraph \"%s\" {\n", prj.Name(nil)))
+func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			switch p := p.(type) {
+			case error:
+				err = p
+			default:
+				panic(p)
+			}
+		}
+	}()
+	akku := func(p int, err error) {
+		n += p
+		if err != nil {
+			panic(err)
+		}
+	}
+	akku(fmt.Fprintf(w, "digraph \"%s\" {\n", prj.Name(nil)))
 	for n, g := range prj.goals {
 		tn := reflect.Indirect(reflect.ValueOf(g.Artefact)).Type().Name()
 		var updMode string
@@ -118,20 +131,80 @@ func (prj *Project) WriteDot(w io.Writer) (err error) {
 				updMode = " *"
 			}
 		}
-		fmt.Fprintf(w, "\t\"%p\" [shape=record,label=\"{%s%s|%s}\"];\n", g, tn, updMode, n)
+		if _, ok := g.Artefact.(Abstract); ok {
+			akku(fmt.Fprintf(w,
+				"\t\"%p\" [shape=box,style=dashed,label=\"%s%s\"];\n",
+				g,
+				n,
+				updMode,
+			))
+		} else {
+			akku(fmt.Fprintf(w, "\t\"%p\" [shape=record,label=\"{%s%s|%s}\"];\n",
+				g,
+				tn,
+				updMode,
+				n,
+			))
+		}
 		for _, a := range g.ResultOf {
 			if a.Op == nil {
-				fmt.Fprintf(w, "\t\"%p\" [shape=none,label=\"implicit\"];\n", a)
+				akku(fmt.Fprintf(w, "\t\"%p\" [shape=none,label=\"implicit\"];\n", a))
 			} else {
-				fmt.Fprintf(w, "\t\"%p\" [label=\"%s\"];\n", a, a.String())
+				akku(fmt.Fprintf(w, "\t\"%p\" [label=\"%s\"];\n", a, a.String()))
 			}
-			fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", a, g)
+			akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", a, g))
 			for _, p := range a.Premises {
-				fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", p, a)
+				akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", p, a))
 			}
 		}
 	}
-	must.Ret(fmt.Fprintln(w, "}"))
+	akku(fmt.Fprintln(w, "}"))
+	return
+}
+
+func (prj *Project) NewAction(premises, results []*Goal, op Operation) *Action {
+	err := prj.consistentPrj(premises, results)
+	if err != nil {
+		op = badOp{op: op, err: err}
+	} else if prj == nil {
+		op = badOp{op: op, err: errors.New("no project")}
+	}
+	a := &Action{
+		Premises: premises,
+		Results:  results,
+		Op:       op,
+		prj:      prj,
+	}
+	for _, p := range premises {
+		p.PremiseOf = append(p.PremiseOf, a)
+	}
+	for _, r := range results {
+		r.ResultOf = append(r.ResultOf, a)
+	}
+	return a
+}
+
+func (prj *Project) consistentPrj(premises, results []*Goal) error {
+	for _, g := range premises {
+		if prj == nil {
+			prj = g.Project()
+		} else if p := g.Project(); p != prj {
+			return fmt.Errorf("premise '%s' not in project '%s'",
+				p.String(),
+				prj.String(),
+			)
+		}
+	}
+	for _, g := range results {
+		if prj == nil {
+			prj = g.Project()
+		} else if p := g.Project(); p != prj {
+			return fmt.Errorf("result '%s' not in project '%s'",
+				p.String(),
+				prj.String(),
+			)
+		}
+	}
 	return nil
 }
 
@@ -141,21 +214,17 @@ func (prj *Project) buildID() int64 {
 }
 
 func (prj *Project) relPath(s string) string {
-	if filepath.IsAbs(s) {
-		return s
+	var (
+		tmp string
+		err error
+	)
+	if prj.Dir == "" {
+		tmp, err = filepath.Rel(".", s)
+	} else {
+		tmp, err = filepath.Rel(prj.Dir, s)
 	}
-	if prj == nil {
-		if s == "" || s == "." {
-			tmp, err := filepath.Abs(s)
-			if err == nil {
-				return tmp
-			}
-		}
-		return s
-	}
-	r, err := filepath.Rel(prj.Dir, s)
 	if err != nil {
 		return filepath.Clean(s)
 	}
-	return r
+	return tmp
 }

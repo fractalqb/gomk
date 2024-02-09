@@ -10,12 +10,12 @@ import (
 )
 
 type GoTool struct {
-	Exe string
+	GoExe string
 }
 
 func (t *GoTool) goExe() (string, error) {
-	if t.Exe != "" {
-		return t.Exe, nil
+	if t.GoExe != "" {
+		return t.GoExe, nil
 	}
 	return exec.LookPath("go")
 }
@@ -28,11 +28,8 @@ type GoBuild struct {
 	SetVars  []string // See https://pkg.go.dev/cmd/link Flag: -X
 }
 
-func (gb *GoBuild) NewAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+func (gb *GoBuild) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	var err error
-	if prj, err = CheckProject(prj, ps, rs); err != nil {
-		return nil, err
-	}
 	if len(rs) != 1 {
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "go build with %d results:", len(rs))
@@ -60,10 +57,10 @@ func (gb *GoBuild) NewAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 		return nil, err
 	}
 	op := &CmdOp{
-		WorkDir: prj.Dir,
-		Exe:     goTool,
-		Args:    []string{"build", "-C", chdir},
-		Desc:    fmt.Sprintf("go build %s", chdir),
+		CWD:  prj.Dir,
+		Exe:  goTool,
+		Args: []string{"build", "-C", chdir},
+		Desc: fmt.Sprintf("%s$ go build", chdir),
 	}
 	if gb.Install {
 		op.Args[0] = "install"
@@ -79,7 +76,7 @@ func (gb *GoBuild) NewAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 		fmt.Fprintf(&ldflags, " -X %s", v)
 	}
 	op.Args = append(op.Args, "-ldflags", ldflags.String())
-	return newAction(ps, rs, op), nil
+	return prj.NewAction(ps, rs, op), nil
 }
 
 type GoTest struct {
@@ -88,25 +85,22 @@ type GoTest struct {
 	Pkgs []string
 }
 
-func (gt *GoTest) NewAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+func (gt *GoTest) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	var err error
-	if prj, err = CheckProject(prj, ps, rs); err != nil {
-		return nil, err
-	}
 	goTool, err := gt.goExe()
 	if err != nil {
 		return nil, err
 	}
 	op := &CmdOp{
-		WorkDir: prj.Dir,
-		Exe:     goTool,
-		Args:    []string{"test"},
-		Desc:    fmt.Sprintf("go test %s", strings.Join(gt.Pkgs, " ")),
+		CWD:  prj.Dir,
+		Exe:  goTool,
+		Args: []string{"test"},
+		Desc: fmt.Sprintf("go test %s", strings.Join(gt.Pkgs, " ")),
 	}
 	if len(gt.Pkgs) > 0 {
 		op.Args = append(op.Args, gt.Pkgs...)
 	}
-	return newAction(ps, rs, op), nil
+	return prj.NewAction(ps, rs, op), nil
 }
 
 type GoGenerate struct {
@@ -117,23 +111,20 @@ type GoGenerate struct {
 	Skip      string
 }
 
-func (gg *GoGenerate) NewAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+func (gg *GoGenerate) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	var err error
-	if prj, err = CheckProject(prj, ps, rs); err != nil {
-		return nil, err
-	}
 	goTool, err := gg.goExe()
 	if err != nil {
 		return nil, err
 	}
 	op := &CmdOp{
-		WorkDir: prj.Dir,
-		Exe:     goTool,
-		Args:    []string{"generate"},
-		Desc:    fmt.Sprintf("go generate %s", strings.Join(gg.FilesPkgs, " ")),
+		CWD:  prj.Dir,
+		Exe:  goTool,
+		Args: []string{"generate"},
+		Desc: fmt.Sprintf("go generate %s", strings.Join(gg.FilesPkgs, " ")),
 	}
 	if gg.CWD != "" {
-		op.WorkDir = filepath.Join(op.WorkDir, gg.CWD)
+		op.CWD = filepath.Join(op.CWD, gg.CWD)
 	}
 	if gg.Run != "" {
 		op.Args = append(op.Args, "-run", gg.Run)
@@ -144,5 +135,74 @@ func (gg *GoGenerate) NewAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	if len(gg.FilesPkgs) > 0 {
 		op.Args = append(op.Args, gg.FilesPkgs...)
 	}
-	return newAction(ps, rs, op), nil
+	return prj.NewAction(ps, rs, op), nil
+}
+
+type GoRun struct {
+	GoTool
+	CWD  string
+	Exec string
+	Pkg  string
+	Args []string
+}
+
+func (gr *GoRun) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+	var err error
+	if gr.Pkg == "" {
+		return nil, errors.New("go run without package")
+	}
+	goTool, err := gr.goExe()
+	if err != nil {
+		return nil, err
+	}
+	op := &CmdOp{
+		CWD:  prj.Dir,
+		Exe:  goTool,
+		Args: []string{"run"},
+		Desc: fmt.Sprintf("go run %s", gr.Pkg),
+	}
+	if gr.CWD != "" {
+		op.CWD = filepath.Join(op.CWD, gr.CWD)
+	}
+	if gr.Exec != "" {
+		op.Args = append(op.Args, "-exec", gr.Exec)
+	}
+	op.Args = append(op.Args, gr.Pkg)
+	op.Args = append(op.Args, gr.Args...)
+	return prj.NewAction(ps, rs, op), nil
+}
+
+type GoVulncheck struct {
+	Version  string
+	CWD      string
+	Tags     []string
+	Patterns []string
+}
+
+func (gvc *GoVulncheck) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+	const govulncheck = "golang.org/x/vuln/cmd/govulncheck"
+	var err error
+	goTool, err := (&GoTool{}).goExe()
+	if err != nil {
+		return nil, err
+	}
+	op := &CmdOp{
+		CWD:  prj.Dir,
+		Exe:  goTool,
+		Args: []string{"run"},
+		Desc: "govulncheck",
+	}
+	if len(gvc.Patterns) > 0 {
+		op.Desc = fmt.Sprintf("%s %s", op.Desc, strings.Join(gvc.Patterns, " "))
+	}
+	if len(gvc.Tags) > 0 {
+		op.Args = append(op.Args, "-tags", strings.Join(gvc.Tags, ","))
+	}
+	if gvc.Version == "" {
+		op.Args = append(op.Args, govulncheck+"@latest")
+	} else {
+		op.Args = append(op.Args, govulncheck+"@"+gvc.Version)
+	}
+	op.Args = append(op.Args, gvc.Patterns...)
+	return prj.NewAction(ps, rs, op), nil
 }

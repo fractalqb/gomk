@@ -12,10 +12,12 @@ type Builder struct {
 	bid int64
 }
 
+// Project builds all leafs in prj.
 func (bd *Builder) Project(prj *Project) error {
 	return bd.ProjectContext(context.Background(), prj)
 }
 
+// ProjectContext builds all leafs in prj.
 func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
 	prj.buildLock.Lock()
 	defer prj.buildLock.Unlock()

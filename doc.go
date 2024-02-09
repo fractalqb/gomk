@@ -1,14 +1,14 @@
-// Package gomk helps to write build scripts in Go for projects where running go
-// build is not enough. Instead of using platform-specific tools, a build script
-// written in Go can better ensure platform independence. gomk is built around
-// the core concepts of [Goal] and [Action].
+// Package gomk helps to write build scripts in Go for projects where just
+// running 'go build' is not enough. Instead of using platform-specific tools, a
+// build script written in Go can better ensure platform independence. gomk is
+// built around the core concepts of [Goal] and [Action].
 //
 // gomk is just a Go library. Is can be used in any context of reasonable
 // programming with Go. Nevertheless, a few conventions can be helpful. A build
 // script is a Go executable. As such it cannot be used by other packages (using
 // [plugins] is not considered, primarily for not generally being portable).
 //
-//	The recommended file name of a build script is "mk.go"
+//	"mk.go" is the recommended file name for a build script
 //
 // The build scripts of a project must not collide with the rest of the code.
 // Here are a few ideas for structuring the build scripts:

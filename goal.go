@@ -1,7 +1,6 @@
 package gomk
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"hash"
@@ -47,49 +46,21 @@ type Goal struct {
 	lastBuild int64
 }
 
-func (g *Goal) ByOp(op Operation, premises ...*Goal) *Goal {
-	newAction(premises, []*Goal{g}, op)
-	return g
-}
-
-func (g *Goal) ImplicitBy(premises ...*Goal) *Goal {
-	newAction(premises, []*Goal{g}, nil)
-	return g
-}
-
-func (g *Goal) ByAction(a ActionBuilder, premises ...*Goal) *Goal {
-	_, err := a.NewAction(g.Project(), premises, []*Goal{g})
+func (g *Goal) By(a ActionBuilder, premises ...*Goal) *Goal {
+	_, err := a.BuildAction(g.Project(), premises, []*Goal{g})
 	if err != nil {
-		return g.ByOp(badOp{err: err})
+		g.Project().NewAction(premises, []*Goal{g}, badOp{err: err})
+		return g
 	}
+	return g
+}
+
+func (g *Goal) ImpliedBy(premises ...*Goal) *Goal {
+	g.Project().NewAction(premises, []*Goal{g}, nil)
 	return g
 }
 
 func (g *Goal) Project() *Project { return g.prj }
-
-func (g *Goal) Update(env *Env) error {
-	return g.UpdateContext(context.Background(), env)
-}
-
-func (g *Goal) UpdateContext(ctx context.Context, env *Env) error {
-	if env == nil {
-		env = DefaultEnv()
-	}
-	env.Log.Info("update `goal` in `project`", `goal`, g.String())
-	if len(g.ResultOf) == 0 {
-		return nil
-	}
-	if g.UpdateMode.Is(AllActions) {
-		for _, a := range g.ResultOf {
-			if err := a.RunContext(ctx, env); err != nil {
-				return err
-			}
-		}
-		return nil
-	} else {
-		return g.ResultOf[0].RunContext(ctx, env)
-	}
-}
 
 func (g *Goal) Name() string { return g.Artefact.Name(g.Project()) }
 
@@ -133,10 +104,10 @@ func (a Abstract) StateAt() time.Time { return time.Time{} }
 
 type Directory string
 
-func (d Directory) Path() string { return string(d) }
+// Implement [Artefact]
+func (d Directory) Name(prj *Project) string { return d.In(prj) }
 
-func (d Directory) Name(in *Project) string { return in.relPath(d.Path()) }
-
+// Implement [Artefact]
 func (d Directory) StateAt() time.Time {
 	st, err := d.Stat()
 	if err != nil || !st.IsDir() {
@@ -144,6 +115,10 @@ func (d Directory) StateAt() time.Time {
 	}
 	return st.ModTime()
 }
+
+func (d Directory) In(prj *Project) string { return prj.relPath(d.Path()) }
+
+func (d Directory) Path() string { return string(d) }
 
 func (d Directory) Stat() (fs.FileInfo, error) { return os.Stat(d.Path()) }
 
@@ -154,8 +129,7 @@ type HashableArtefact interface {
 
 type File string
 
-func (f File) Path() string { return string(f) }
-
+// Implement [Artefact]
 func (f File) StateAt() time.Time {
 	st, err := f.Stat()
 	if err != nil || st.IsDir() {
@@ -164,9 +138,14 @@ func (f File) StateAt() time.Time {
 	return st.ModTime()
 }
 
-func (f File) Stat() (fs.FileInfo, error) { return os.Stat(f.Path()) }
+// Implement [Artefact]
+func (f File) Name(prj *Project) string { return f.In(prj) }
 
-func (f File) Name(in *Project) string { return in.relPath(f.Path()) }
+func (f File) In(prj *Project) string { return prj.relPath(f.Path()) }
+
+func (f File) Path() string { return string(f) }
+
+func (f File) Stat() (fs.FileInfo, error) { return os.Stat(f.Path()) }
 
 func (f File) WriteHash(h hash.Hash) error {
 	r, err := os.Open(f.Path())

@@ -9,15 +9,15 @@ import (
 )
 
 type CmdOp struct {
-	WorkDir string
-	Exe     string
-	Args    []string
-	Desc    string
+	CWD  string
+	Exe  string
+	Args []string
+	Desc string
 }
 
 func (op *CmdOp) Describe(prj *Project) string {
 	if op.Desc == "" {
-		path := prj.relPath(op.WorkDir)
+		path := prj.relPath(op.CWD)
 		return fmt.Sprintf("%s$%s%v", path, op.Exe, op.Args)
 	}
 	return op.Desc
@@ -29,7 +29,7 @@ func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
 		env.Log.Warn(err.Error(), slog.String("action", a.String()))
 	}
 	cmd := exec.CommandContext(ctx, op.Exe, op.Args...)
-	cmd.Dir = op.WorkDir
+	cmd.Dir = op.CWD
 	cmd.Env = xenv
 	cmd.Stdin = env.In
 	cmd.Stdout = env.Out
@@ -65,7 +65,7 @@ func (po PipeOp) Do(ctx context.Context, a *Action, env *Env) error {
 	for i := 0; i < len(po); i++ {
 		cop := &po[i]
 		cmd := exec.CommandContext(ctx, cop.Exe, cop.Args...)
-		cmd.Dir = cop.WorkDir
+		cmd.Dir = cop.CWD
 		cmd.Env = xenv
 		if i == 0 {
 			cmd.Stdin = env.In

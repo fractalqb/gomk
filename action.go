@@ -14,28 +14,6 @@ type Action struct {
 	prj *Project
 }
 
-func newAction(ps, rs []*Goal, op Operation) *Action {
-	prj, err := CheckProject(nil, ps, rs)
-	if err != nil {
-		op = badOp{op: op, err: err}
-	} else if prj == nil {
-		op = badOp{op: op, err: errors.New("no project")}
-	}
-	a := &Action{
-		Premises: ps,
-		Results:  rs,
-		Op:       op,
-		prj:      prj,
-	}
-	for _, p := range ps {
-		p.PremiseOf = append(p.PremiseOf, a)
-	}
-	for _, r := range rs {
-		r.ResultOf = append(r.ResultOf, a)
-	}
-	return a
-}
-
 func (a *Action) Project() *Project { return a.prj }
 
 func (a *Action) Run(env *Env) error {
@@ -81,31 +59,7 @@ func (of OperationFunc) Do(ctx context.Context, a *Action, env *Env) error {
 }
 
 type ActionBuilder interface {
-	NewAction(prj *Project, premises, results []*Goal) (*Action, error)
-}
-
-func CheckProject(prj *Project, premises, results []*Goal) (*Project, error) {
-	for _, g := range premises {
-		if prj == nil {
-			prj = g.Project()
-		} else if p := g.Project(); p != prj {
-			return nil, fmt.Errorf("premise '%s' not in project '%s'",
-				p.String(),
-				prj.String(),
-			)
-		}
-	}
-	for _, g := range results {
-		if prj == nil {
-			prj = g.Project()
-		} else if p := g.Project(); p != prj {
-			return nil, fmt.Errorf("result '%s' not in project '%s'",
-				p.String(),
-				prj.String(),
-			)
-		}
-	}
-	return prj, nil
+	BuildAction(prj *Project, premises, results []*Goal) (*Action, error)
 }
 
 type badOp struct {
