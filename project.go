@@ -1,172 +1,161 @@
 package gomk
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"reflect"
+	"sync"
+	"time"
+
+	"git.fractalqb.de/fractalqb/eloc"
+	"git.fractalqb.de/fractalqb/eloc/must"
 )
 
-type Config struct {
-	RootDir string
-	Env     interface{}
-}
-
 type Project struct {
-	Env     EnvVars
-	RootDir Dir
-	Err     error
-	tasks   map[string]Task
-	parent  *Project
-	subps   []*Project
+	Dir string
+
+	goals     map[string]*Goal
+	buildLock sync.Mutex
+	lastBuild int64
 }
 
-func NewProject(onErr OnErrFunc, cfg *Config) (prj *Project) {
-	if cfg == nil {
-		var err error
-		cfg = &Config{}
-		cfg.RootDir, err = os.Getwd() // TODO filepath.Clean ?
-		if err != nil {
-			prj = &Project{Err: err}
-			CheckErrState(onErr, prj)
-			return prj
-		}
+func NewProject(dir string) *Project {
+	if dir == "" {
+		dir, _ = os.Getwd()
 	}
-	prj = &Project{tasks: make(map[string]Task)}
-
-	switch env := cfg.Env.(type) {
-	case []string:
-		e, err := NewEnvVarsString(env)
-		if err != nil {
-			prj.Err = err
-			CheckErrState(onErr, prj)
-			return prj
-		}
-		prj.Env = *e
-	case map[string]string:
-		prj.Env = *NewEnvVars(env)
-	case nil:
-		prj.Env = *NewOSEnv()
-	default:
-		prj.Err = fmt.Errorf("cannot set project env from %T", cfg.Env)
-		CheckErrState(onErr, prj)
-		return prj
+	prj := &Project{
+		Dir:   dir,
+		goals: make(map[string]*Goal),
 	}
-
-	cfg.RootDir, prj.Err = filepath.Abs(cfg.RootDir)
-	if prj.Err != nil {
-		CheckErrState(onErr, prj)
-		return prj
-	}
-	prj.RootDir = Dir{prj: prj, abs: cfg.RootDir}
-
 	return prj
 }
 
-func (prj *Project) ErrState() error { return prj.Err }
-
-func (prj *Project) New(onErr OnErrFunc, cfg *Config) (sub *Project) {
-	if cfg == nil {
-		cfg = new(Config)
+func (prj *Project) Goal(atf Artefact) *Goal {
+	if atf == nil {
+		n := fmt.Sprintf("artefact-%d", len(prj.goals))
+		atf = Abstract(n)
 	}
-	if cfg.Env == nil {
-		strs := make([]string, len(prj.Env.Strings()))
-		copy(strs, prj.Env.Strings())
-		cfg.Env = strs
+	name := atf.Name(prj)
+	if g := prj.goals[name]; g != nil {
+		return g
 	}
-	sub = NewProject(onErr, cfg)
-	if sub.Err != nil {
-		return sub
+	g := &Goal{
+		Artefact: atf,
+		prj:      prj,
 	}
-	sub.parent = prj
-	prj.subps = append(prj.subps, sub)
-	return sub
+	prj.goals[name] = g
+	return g
 }
 
-func (prj *Project) Name() string {
-	return filepath.Base(prj.RootDir.Abs())
+func (prj *Project) FindGoal(name string) *Goal {
+	return prj.goals[name]
 }
 
-func (prj *Project) Task(name string) Task { return prj.tasks[name] }
-
-func (prj *Project) EnvContext(ctx context.Context) context.Context {
-	res := context.WithValue(ctx, ctxValTag{}, &RunEnv{
-		Dir: &prj.RootDir,
-		Env: prj.Env,
-	})
-	return res
+func (prj *Project) Name(in *Project) string {
+	pp := prj.relPath(prj.Dir)
+	if prj == nil {
+		return filepath.Base(pp)
+	}
+	return pp
 }
 
-func (prj *Project) RootTasks(sorted bool) (ts []Task) {
-	for _, t := range prj.tasks {
-		if len(t.DependsOn()) == 0 {
-			ts = append(ts, t)
+func (prj *Project) String() string {
+	tmp := prj.Dir
+	if tmp == "" || tmp == "." {
+		tmp, _ = filepath.Abs(tmp) // TODO error
+	}
+	return filepath.Base(tmp)
+}
+
+func (prj *Project) StateAt() time.Time {
+	leafs := prj.Leafs()
+	if len(leafs) == 0 {
+		return time.Time{}
+	}
+	t := leafs[0].Artefact.StateAt()
+	for _, l := range leafs[1:] {
+		u := l.Artefact.StateAt()
+		if u.After(t) {
+			t = u
 		}
 	}
-	if sorted {
-		sort.Slice(ts, func(i, j int) bool { return ts[i].Name() < ts[j].Name() })
-	}
-	return ts
+	return t
 }
 
-func (prj *Project) LeafeTasks(sorted bool) (ts []Task) {
-	rdeps := make(map[string]int)
-	for _, t := range prj.tasks {
-		if _, ok := rdeps[t.Name()]; !ok {
-			rdeps[t.Name()] = 0
-		}
-		for _, dn := range t.DependsOn() {
-			rdeps[dn] = rdeps[dn] + 1
+func (prj *Project) Leafs() (ls []*Goal) {
+	for _, g := range prj.goals {
+		if len(g.PremiseOf) == 0 {
+			ls = append(ls, g)
 		}
 	}
-	for tn, dn := range rdeps {
-		if dn == 0 {
-			ts = append(ts, prj.Task(tn))
+	return ls
+}
+
+func (prj *Project) Roots() (rs []*Goal) {
+	for _, g := range prj.goals {
+		if len(g.ResultOf) == 0 {
+			rs = append(rs, g)
 		}
 	}
-	if sorted {
-		sort.Slice(ts, func(i, j int) bool { return ts[i].Name() < ts[j].Name() })
-	}
-	return ts
+	return rs
 }
 
-func (prj *Project) WriteDeps(wr io.Writer) {
-	var ts []Task
-	for _, t := range prj.tasks {
-		ts = append(ts, t)
-	}
-	sort.Slice(ts, func(i, j int) bool { return ts[i].Name() < ts[j].Name() })
-	for _, t := range ts {
-		fmt.Fprintf(wr, "%s:", t.Name())
-		for _, dn := range t.DependsOn() {
-			fmt.Fprintf(wr, " %s", dn)
+func (prj *Project) WriteDot(w io.Writer) (err error) {
+	eloc.RecoverAs(&err)
+	must.Ret(fmt.Fprintf(w, "digraph \"%s\" {\n", prj.Name(nil)))
+	for n, g := range prj.goals {
+		tn := reflect.Indirect(reflect.ValueOf(g.Artefact)).Type().Name()
+		var updMode string
+		if len(g.ResultOf) > 1 {
+			switch g.UpdateMode & AllActions {
+			case OneAction:
+				updMode = " 1"
+			case SomeActions:
+				updMode = " +"
+			case AllActions:
+				updMode = " *"
+			}
 		}
-		fmt.Fprintln(wr)
+		fmt.Fprintf(w, "\t\"%p\" [shape=record,label=\"{%s%s|%s}\"];\n", g, tn, updMode, n)
+		for _, a := range g.ResultOf {
+			if a.Op == nil {
+				fmt.Fprintf(w, "\t\"%p\" [shape=none,label=\"implicit\"];\n", a)
+			} else {
+				fmt.Fprintf(w, "\t\"%p\" [label=\"%s\"];\n", a, a.String())
+			}
+			fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", a, g)
+			for _, p := range a.Premises {
+				fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", p, a)
+			}
+		}
 	}
+	must.Ret(fmt.Fprintln(w, "}"))
+	return nil
 }
 
-type Dir struct {
-	prj  *Project
-	pred *Dir
-	abs  string
+func (prj *Project) buildID() int64 {
+	prj.lastBuild++
+	return prj.lastBuild
 }
 
-func (d *Dir) Abs() string { return d.abs }
-
-func (d *Dir) Rel() (string, error) {
-	if d.pred == nil {
-		return ".", nil
+func (prj *Project) relPath(s string) string {
+	if filepath.IsAbs(s) {
+		return s
 	}
-	return filepath.Rel(d.pred.Abs(), d.Abs())
+	if prj == nil {
+		if s == "" || s == "." {
+			tmp, err := filepath.Abs(s)
+			if err == nil {
+				return tmp
+			}
+		}
+		return s
+	}
+	r, err := filepath.Rel(prj.Dir, s)
+	if err != nil {
+		return filepath.Clean(s)
+	}
+	return r
 }
-
-func (d *Dir) Join(elem ...string) *Dir {
-	joined := filepath.Join(append([]string{d.abs}, elem...)...)
-	return &Dir{prj: d.prj, pred: d, abs: joined}
-}
-
-func (d *Dir) Back() *Dir { return d.pred }
-
-func (d *Dir) Prj() *Project { return d.prj }

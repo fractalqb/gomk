@@ -5,29 +5,112 @@ import (
 	"fmt"
 )
 
-func Build(p *Project, task string) error {
-	env := TaskEnv{
-		Ctx:   context.Background(),
-		Trace: LogTracer,
-	}
-	done := make(map[string]error)
-	return build(env, done, p, task)
+type Builder struct {
+	Env    *Env
+	LogDir string
+
+	bid int64
 }
 
-func build(env TaskEnv, done map[string]error, p *Project, task string) error {
-	if err, ok := done[task]; ok {
-		return err
+func (bd *Builder) Project(prj *Project) error {
+	return bd.ProjectContext(context.Background(), prj)
+}
+
+func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
+	prj.buildLock.Lock()
+	defer prj.buildLock.Unlock()
+	bd.bid = prj.buildID()
+	leafs := prj.Leafs()
+	if bd.Env == nil {
+		bd.Env = DefaultEnv()
 	}
-	t := p.Task(task)
-	if t == nil {
-		return fmt.Errorf("no task '%s' in project '%s'", task, p.Name())
-	}
-	for _, b := range t.DependsOn() {
-		if err := build(env, done, p, b); err != nil {
+	bd.Env.Log = bd.Env.Log.With("project", prj.String())
+	for _, leaf := range leafs {
+		if err := bd.buildGoal(ctx, leaf); err != nil {
 			return err
 		}
 	}
-	err := t.Run(env)
-	done[task] = err
-	return err
+	return nil
+}
+
+func (bd *Builder) Goal(gs ...*Goal) error {
+	return bd.GoalsContext(context.Background(), gs...)
+}
+
+func (bd *Builder) GoalsContext(ctx context.Context, gs ...*Goal) error {
+	if len(gs) == 0 {
+		return nil
+	}
+	var prj *Project
+	defer func() {
+		if prj != nil {
+			prj.buildLock.Unlock()
+		}
+	}()
+	if bd.Env == nil {
+		bd.Env = DefaultEnv()
+	}
+	bd.Env.Log = bd.Env.Log.With("project", prj.String())
+	for _, g := range gs {
+		if p := g.Project(); p != prj {
+			if prj != nil {
+				prj.buildLock.Unlock()
+			}
+			prj = p
+			prj.buildLock.Lock()
+		}
+		bd.bid = prj.buildID()
+		if err := bd.buildGoal(ctx, g); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (bd *Builder) NamedGoals(prj *Project, names ...string) error {
+	return bd.NamedGoalsContext(context.Background(), prj, names...)
+}
+
+func (bd *Builder) NamedGoalsContext(ctx context.Context, prj *Project, names ...string) error {
+	var gs []*Goal
+	for _, n := range names {
+		g := prj.FindGoal(n)
+		if g == nil {
+			return fmt.Errorf("no goal named '%s' in project '%s'", n, prj.String())
+		}
+		gs = append(gs, g)
+	}
+	return bd.GoalsContext(ctx, gs...)
+}
+
+func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
+	if g.lastBuild >= bd.bid {
+		return nil
+	}
+	g.lastBuild = bd.bid
+	for _, act := range g.ResultOf {
+		for _, pre := range act.Premises {
+			if err := bd.buildGoal(ctx, pre); err != nil {
+				return err
+			}
+		}
+	}
+	return bd.updateGoal(ctx, g)
+}
+
+func (bd *Builder) updateGoal(ctx context.Context, g *Goal) error {
+	bd.Env.Log.Info("update `goal` in `project`", `goal`, g.String())
+	if len(g.ResultOf) == 0 {
+		return nil
+	}
+	if g.UpdateMode.Is(AllActions) {
+		for _, a := range g.ResultOf {
+			if err := a.RunContext(ctx, bd.Env); err != nil {
+				return err
+			}
+		}
+		return nil
+	} else {
+		return g.ResultOf[0].RunContext(ctx, bd.Env)
+	}
 }

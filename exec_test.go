@@ -2,30 +2,29 @@ package gomk
 
 import (
 	"context"
-	"fmt"
-	"time"
+	"log/slog"
+	"os"
+	"strings"
+	"testing"
 )
 
-func ExampleCommand() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	cmd := Command(ctx, "echo", "Hello, command!")
-	err := cmd.Run()
-	fmt.Println(err)
-	// Output:
-	// Hello, command!
-	// <nil>
-}
-
-func ExamplePipe() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	pipe := BuildPipe(ctx).
-		Command("echo", "Hello, pipe!").
-		Command("cut", "-c", "8-11")
-	err := pipe.Run()
-	fmt.Println(err)
-	// Output:
-	// pipe
-	// <nil>
+func TestPipe(t *testing.T) {
+	pipe := PipeOp{
+		CmdOp{Exe: "tr", Args: []string{"0123456789", "9876543210"}},
+		CmdOp{Exe: "sort"},
+	}
+	var out strings.Builder
+	env := Env{
+		In:  strings.NewReader("1234\n4711\n"),
+		Out: &out,
+		Err: os.Stderr,
+		Log: slog.Default(),
+	}
+	err := pipe.Do(context.Background(), nil, &env)
+	if err != nil {
+		t.Error(err)
+	}
+	if s := out.String(); s != "5288\n8765\n" {
+		t.Errorf("bad output '%s'", s)
+	}
 }

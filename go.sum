@@ -1,12 +1,2 @@
-git.fractalqb.de/fractalqb/catch v0.3.0 h1:Gq2b4k3O4+8joTlXLx8thcwYU0FkRGnZgDAoalAs4dM=
-git.fractalqb.de/fractalqb/catch v0.3.0/go.mod h1:zXovejd5jSkpUrfb5N5wuGqfhoP419f7IjdK+JKIbeE=
-git.fractalqb.de/fractalqb/icontainer v0.3.0 h1:Ng806FZ9qNLCgk9VJt6egCIMxzbiBTzELHJTwQ+Pg8s=
-git.fractalqb.de/fractalqb/icontainer v0.3.0/go.mod h1:8tedqqrYIvDzOkigsUUtta/KoP1pHjHJ0s+4cx5rkXU=
-git.fractalqb.de/fractalqb/pack v0.10.0 h1:Z046Uq0a6HJSgFyde4FIKdhU2PQElGj/6nHkvUZkXmk=
-git.fractalqb.de/fractalqb/pack v0.10.0/go.mod h1:dfAr6XUN7dm7r6gVsH6jnGuTO0afRLPYK/8MT2W0S/0=
-git.fractalqb.de/fractalqb/qblog v0.14.3 h1:Pl6hxImiw+lzMzcCNaqQCPi5cVvevssy5um7Wcim8Tk=
-git.fractalqb.de/fractalqb/qblog v0.14.3/go.mod h1:0OQMFGkEYrCSqwXmuJebD9eUqb2dyKJ6rd/qFskDW84=
-git.fractalqb.de/fractalqb/sllm/v3 v3.0.0-beta.2 h1:BKepN60EDAsvA4CZLRcUmIobpSEee+aiOHyeH8bfPf4=
-git.fractalqb.de/fractalqb/sllm/v3 v3.0.0-beta.2/go.mod h1:TF4z6bXt5lA1tTq4x6eeuaqA9NIYGgTDwui+ookYC7A=
-github.com/fractalqb/texst v0.8.0 h1:r+2Vlj2rys0VNFgQVVp/rCFqO+Hc0HCj8b6pK1DLP04=
-github.com/fractalqb/texst v0.8.0/go.mod h1:1I3XAXaa6C7b8ueo/QIQFXjyhj8oOJA2vNoNHOl08h4=
+git.fractalqb.de/fractalqb/eloc v0.1.2 h1:1WeqwB/oOc+EJ9P6nT6tp/ykaYV340h5hSmXm8ulQPA=
+git.fractalqb.de/fractalqb/eloc v0.1.2/go.mod h1:bYWIoe0VSIhnJLgrgh1TNOF0n72MpwobmOJS8oZah1I=

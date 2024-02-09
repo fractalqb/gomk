@@ -4,201 +4,106 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
+	"log/slog"
 	"os/exec"
-	"strings"
-	"unicode"
 )
 
-// ValidEnvName checks if n is a valid name for an environment variable.
-func ValidEnvName(n string) error {
-	violation := strings.IndexFunc(n, func(r rune) bool {
-		if r == '=' {
-			return true
+type CmdOp struct {
+	WorkDir string
+	Exe     string
+	Args    []string
+	Desc    string
+}
+
+func (op *CmdOp) Describe(prj *Project) string {
+	if op.Desc == "" {
+		path := prj.relPath(op.WorkDir)
+		return fmt.Sprintf("%s$%s%v", path, op.Exe, op.Args)
+	}
+	return op.Desc
+}
+
+func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
+	xenv, err := env.ExecEnv()
+	if err != nil {
+		env.Log.Warn(err.Error(), slog.String("action", a.String()))
+	}
+	cmd := exec.CommandContext(ctx, op.Exe, op.Args...)
+	cmd.Dir = op.WorkDir
+	cmd.Env = xenv
+	cmd.Stdin = env.In
+	cmd.Stdout = env.Out
+	cmd.Stderr = env.Err
+	env.Log.Debug("exec `cmd` in `dir`",
+		slog.String("cmd", cmd.String()),
+		slog.String("dir", cmd.Dir),
+	)
+	err = cmd.Run()
+	if err != nil {
+		env.Log.Error("failed `cmd` in `dir` with `error`",
+			slog.String("cmd", cmd.String()),
+			slog.String("dir", cmd.Dir),
+			slog.String("error", err.Error()),
+		)
+	} else {
+		env.Log.Debug("done with `cmd`", slog.String("cmd", cmd.String()))
+	}
+	return err
+}
+
+type PipeOp []CmdOp
+
+func (po PipeOp) Do(ctx context.Context, a *Action, env *Env) error {
+	var (
+		cmds      = make([]*exec.Cmd, len(po))
+		pipes     = make([]piperw, len(po)-1)
+		xenv, err = env.ExecEnv()
+	)
+	if err != nil {
+		env.Log.Warn(err.Error(), slog.String("action", a.String()))
+	}
+	for i := 0; i < len(po); i++ {
+		cop := &po[i]
+		cmd := exec.CommandContext(ctx, cop.Exe, cop.Args...)
+		cmd.Dir = cop.WorkDir
+		cmd.Env = xenv
+		if i == 0 {
+			cmd.Stdin = env.In
+		} else {
+			r, w := io.Pipe()
+			cmds[i-1].Stdout = w
+			cmd.Stdin = r
+			pipes[i-1] = piperw{r, w}
 		}
-		if unicode.IsSpace(r) {
-			return true
+		if i+1 == len(po) {
+			cmd.Stdout = env.Out
 		}
-		return false
-	})
-	if violation >= 0 {
-		return fmt.Errorf("env key contains '%c'", n[violation])
+		cmd.Stderr = env.Err
+		cmds[i] = cmd
+	}
+	for i, cmd := range cmds {
+		if err := cmd.Start(); err != nil {
+			for k := 0; k < i; k++ {
+				cmds[k].Process.Kill() // TODO check
+			}
+			return err
+		}
+	}
+	for i, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			for k := i + 1; k < len(cmds); k++ {
+				cmds[k].Process.Kill() // TODO check
+			}
+			return err
+		}
+		if i < len(pipes) {
+			pipes[i].w.Close()
+		}
 	}
 	return nil
-}
-
-type EnvVars struct {
-	kvm map[string]string
-	env []string
-}
-
-func NewEnvVars(init map[string]string) *EnvVars {
-	res := &EnvVars{kvm: init}
-	if res.kvm == nil {
-		res.kvm = make(map[string]string)
-	}
-	return res
-}
-
-func NewEnvVarsString(init []string) (*EnvVars, error) {
-	env := NewEnvVars(nil)
-	env.env = init
-	for _, str := range init {
-		sep := strings.IndexByte(str, '=')
-		k, v := str[:sep], str[sep+1:]
-		if err := ValidEnvName(k); err != nil {
-			return nil, err
-		}
-		env.kvm[k] = v
-	}
-	return env, nil
-}
-
-func NewOSEnv() *EnvVars {
-	res, _ := NewEnvVarsString(os.Environ())
-	return res
-}
-
-func (e EnvVars) Get(key string) string { return e.kvm[key] }
-
-func (e EnvVars) Lookup(key string) (val string, ok bool) {
-	val, ok = e.kvm[key]
-	return val, ok
-}
-
-func (e *EnvVars) Set(key, val string) *EnvVars {
-	e.kvm[key] = val
-	e.env = nil
-	return e
-}
-
-func (e *EnvVars) Unset(key string) *EnvVars {
-	delete(e.kvm, key)
-	e.env = nil
-	return e
-}
-
-func (e *EnvVars) Strings() []string {
-	if len(e.kvm) != len(e.env) {
-		e.env = make([]string, 0, len(e.kvm))
-		for k, v := range e.kvm {
-			var sb strings.Builder
-			sb.WriteString(k)
-			sb.WriteByte('=')
-			sb.WriteString(v)
-			e.env = append(e.env, sb.String())
-		}
-	}
-	return e.env
-}
-
-func Command(ctx context.Context, name string, arg ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, arg...)
-	if cv := RunEnvContext(ctx); cv != nil {
-		cmd.Dir = cv.Dir.Abs()
-		cmd.Env = cv.Env.Strings()
-		if cv.In == nil {
-			cmd.Stdin = os.Stdin
-		} else {
-			cmd.Stdin = cv.In
-		}
-		if cv.Out == nil {
-			cmd.Stdout = os.Stdout
-		} else {
-			cmd.Stdout = cv.Out
-		}
-		if cv.Err == nil {
-			cmd.Stderr = os.Stderr
-		} else {
-			cmd.Stderr = cv.Err
-		}
-	} else {
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
-	return cmd
-}
-
-type CommandDef struct {
-	Name string
-	Args []string
-}
-
-func DefinedCommand(ctx context.Context, cmd CommandDef) *exec.Cmd {
-	return Command(ctx, cmd.Name, cmd.Args...)
-}
-
-type Pipe struct {
-	ctx   context.Context
-	env   *RunEnv
-	cmds  []*exec.Cmd
-	pipes []piperw
 }
 
 type piperw struct {
 	r *io.PipeReader
 	w *io.PipeWriter
-}
-
-func BuildPipe(ctx context.Context) *Pipe {
-	return &Pipe{ctx: ctx, env: RunEnvContext(ctx)}
-}
-
-func (p *Pipe) Command(name string, arg ...string) *Pipe {
-	cmd := Command(p.ctx, name, arg...)
-	p.cmds = append(p.cmds, cmd)
-	return p
-}
-
-func (p Pipe) Run() error {
-	if err := p.Start(); err != nil {
-		return err
-	}
-	return p.Wait()
-}
-
-func (p *Pipe) Start() error {
-	switch len(p.cmds) {
-	case 0:
-		return nil
-	case 1:
-		return p.cmds[0].Start()
-	}
-	pred := p.cmds[0]
-	for _, cmd := range p.cmds[1:] {
-		r, w := io.Pipe()
-		p.pipes = append(p.pipes, piperw{r, w})
-		pred.Stdout, cmd.Stdin = w, r
-		pred = cmd
-	}
-	for _, cmd := range p.cmds {
-		if err := cmd.Start(); err != nil {
-			return err // TODO Howto clean up???
-		}
-	}
-	return nil
-}
-
-func (p *Pipe) Wait() (err error) {
-	switch len(p.cmds) {
-	case 0:
-		return nil
-	case 1:
-		err := p.cmds[0].Wait()
-		return err
-	}
-	for i, cmd := range p.cmds {
-		if e := cmd.Wait(); err == nil {
-			err = e
-		}
-		if i != len(p.pipes) {
-			prw := &p.pipes[i]
-			prw.w.Close()
-		}
-	}
-	for _, prw := range p.pipes {
-		prw.r.Close()
-	}
-	return err
 }
