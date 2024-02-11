@@ -2,17 +2,21 @@ package gomk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 type CmdOp struct {
-	CWD  string
-	Exe  string
-	Args []string
-	Desc string
+	CWD             string
+	Exe             string
+	Args            []string
+	InFile, OutFile string
+	Desc            string
 }
 
 func (op *CmdOp) Describe(prj *Project) string {
@@ -31,8 +35,26 @@ func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
 	cmd := exec.CommandContext(ctx, op.Exe, op.Args...)
 	cmd.Dir = op.CWD
 	cmd.Env = xenv
-	cmd.Stdin = env.In
-	cmd.Stdout = env.Out
+	if op.InFile != "" {
+		if r, err := os.Open(op.InFile); err != nil {
+			return err
+		} else {
+			defer r.Close()
+			cmd.Stdin = r
+		}
+	} else {
+		cmd.Stdin = env.In
+	}
+	if op.OutFile != "" {
+		if w, err := os.Create(op.OutFile); err != nil {
+			return err
+		} else {
+			defer w.Close()
+			cmd.Stdout = w
+		}
+	} else {
+		cmd.Stdout = env.Out
+	}
 	cmd.Stderr = env.Err
 	env.Log.Debug("exec `cmd` in `dir`",
 		slog.String("cmd", cmd.String()),
@@ -104,4 +126,47 @@ func (po PipeOp) Do(ctx context.Context, a *Action, env *Env) error {
 type piperw struct {
 	r *io.PipeReader
 	w *io.PipeWriter
+}
+
+type ConverCmd struct {
+	Exe    string
+	Output string // 1, 2, stdout, <output-flag> e.g. "-o"
+	Args   []string
+}
+
+func (cc *ConverCmd) BuildAction(prj *Project, premises, results []*Goal) (*Action, error) {
+	if len(premises) != 1 || len(results) != 1 {
+		return nil, errors.New("ConvertCmd requires one premise and one result file goal")
+	}
+	pre, res := premises[0], results[0]
+	inFile, ok := pre.Artefact.(File)
+	if !ok {
+		return nil, fmt.Errorf("ConvertCmd expect one premise file, have one %T", pre.Artefact)
+	}
+	outFile, ok := res.Artefact.(File)
+	if !ok {
+		return nil, fmt.Errorf("ConvertCmd expect one reslut file, have one %T", res.Artefact)
+	}
+	op := &CmdOp{
+		CWD:  filepath.Dir(inFile.Path()),
+		Exe:  cc.Exe,
+		Args: cc.Args,
+		Desc: fmt.Sprintf("%s: %s -> %s",
+			filepath.Base(cc.Exe),
+			filepath.Base(inFile.Path()),
+			filepath.Base(outFile.Path()),
+		),
+	}
+	if cc.Output != "" && cc.Output[0] == '-' {
+		op.Args = append(op.Args, cc.Output, filepath.Base(outFile.Path()))
+	} else if cc.Output == "1" {
+		op.Args = append(op.Args, filepath.Base(outFile.Path()))
+	}
+	op.Args = append(op.Args, filepath.Base(inFile.Path()))
+	if cc.Output == "2" {
+		op.Args = append(op.Args, filepath.Base(outFile.Path()))
+	} else if cc.Output == "stdout" {
+		op.OutFile = outFile.Path()
+	}
+	return prj.NewAction(premises, results, op), nil
 }

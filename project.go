@@ -52,11 +52,10 @@ func (prj *Project) FindGoal(name string) *Goal {
 }
 
 func (prj *Project) Name(in *Project) string {
-	pp := in.relPath(prj.Dir)
-	if prj == nil {
-		return filepath.Base(pp)
+	if in == nil {
+		return filepath.Base(prj.Dir)
 	}
-	return pp
+	return in.relPath(prj.Dir)
 }
 
 func (prj *Project) String() string {
@@ -162,7 +161,15 @@ func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
 	return
 }
 
+// NewAction creates a new [Action] in project prj. There must be at least one
+// result, otherwise no action is created and nil is returned. All premises and
+// results must belong to the same project prj. The action is also created in
+// the event of an error, but with a bad-operation that describes the error and
+// fails when being run. Use [Action.Valid] or [Goal.Valid] to check for errors.
 func (prj *Project) NewAction(premises, results []*Goal, op Operation) *Action {
+	if len(premises) == 0 && len(results) == 0 {
+		return nil
+	}
 	err := prj.consistentPrj(premises, results)
 	if err != nil {
 		op = badOp{op: op, err: err}

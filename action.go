@@ -2,7 +2,6 @@ package gomk
 
 import (
 	"context"
-	"errors"
 	"fmt"
 )
 
@@ -34,9 +33,17 @@ func (a *Action) RunContext(ctx context.Context, env *Env) error {
 	return a.Op.Do(ctx, a, env)
 }
 
+// Valid returns an error if a's [Operation] is a bad-operation. The error
+// describes what is wrong with action a.
 func (a *Action) Valid() error {
 	if bop, ok := a.Op.(badOp); ok {
-		return errors.New(bop.Describe(a.Project()))
+		if bop.op == nil {
+			return fmt.Errorf("bad operation:%w", bop.err)
+		}
+		return fmt.Errorf("bad operation:%s:%w",
+			bop.op.Describe(a.Project()),
+			bop.err,
+		)
 	}
 	return nil
 }
@@ -64,6 +71,15 @@ func (of OperationFunc) Do(ctx context.Context, a *Action, env *Env) error {
 
 type ActionBuilder interface {
 	BuildAction(prj *Project, premises, results []*Goal) (*Action, error)
+}
+
+var Implicit implicit
+
+type implicit struct{}
+
+func (implicit) BuildAction(prj *Project, premises, results []*Goal) (*Action, error) {
+	a := prj.NewAction(premises, results, nil)
+	return a, nil
 }
 
 type badOp struct {

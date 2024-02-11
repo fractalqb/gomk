@@ -59,11 +59,22 @@ func main() {
 	goalBuildBar := prj.Goal(gomk.File("cmd/bar/bar")).
 		By(&goBuild, goalTest)
 
+	// requires 'markdown' to be in the path
+	gomk.FsConvert(prj, "doc", "*/*.md", ".html", &gomk.ConverCmd{
+		Exe:    "markdown",
+		Output: "stdout",
+	})
+	// requires 'plantuml' to be in the path
+	gomk.FsConvert(prj, "doc", "*/*.puml", ".png", &gomk.ConverCmd{Exe: "plantuml"})
+
 	prj.Goal(gomk.Directory("dist")).
 		By(gomk.FsCopy{MkDirs: true}, goalBuildFoo, goalBuildBar)
 
 	if writeDot {
-		prj.WriteDot(os.Stdout)
+		if _, err := prj.WriteDot(os.Stdout); err != nil {
+			slog.Error(err.Error())
+			os.Exit(1)
+		}
 		return
 	}
 

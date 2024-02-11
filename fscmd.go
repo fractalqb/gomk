@@ -4,13 +4,73 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"log/slog"
 )
+
+type Directory string
+
+// Implement [Artefact]
+func (d Directory) Name(prj *Project) string { return d.In(prj) }
+
+// Implement [Artefact]
+func (d Directory) StateAt() time.Time {
+	st, err := d.Stat()
+	if err != nil || !st.IsDir() {
+		return time.Time{}
+	}
+	return st.ModTime()
+}
+
+func (d Directory) In(prj *Project) string { return prj.relPath(d.Path()) }
+
+func (d Directory) Path() string { return string(d) }
+
+func (d Directory) Stat() (fs.FileInfo, error) { return os.Stat(d.Path()) }
+
+type HashableArtefact interface {
+	Artefact
+	WriteHash(hash.Hash) error
+}
+
+type File string
+
+// Implement [Artefact]
+func (f File) StateAt() time.Time {
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		return time.Time{}
+	}
+	return st.ModTime()
+}
+
+// Implement [Artefact]
+func (f File) Name(prj *Project) string { return f.In(prj) }
+
+func (f File) In(prj *Project) string { return prj.relPath(f.Path()) }
+
+func (f File) Path() string { return string(f) }
+
+func (f File) Stat() (fs.FileInfo, error) { return os.Stat(f.Path()) }
+
+func (f File) WriteHash(h hash.Hash) error {
+	r, err := os.Open(f.Path())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	}
+	defer r.Close()
+	_, err = io.Copy(h, r)
+	return err
+}
 
 type FsCopy struct {
 	MkDirs bool
@@ -159,4 +219,35 @@ func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
 		return err
 	}
 	return err
+}
+
+func FsConvert(prj *Project, dir Directory, glob, outExt string, cnv ActionBuilder) error {
+	res := prj.Goal(dir)
+	var outGoals []*Goal
+	err := filepath.WalkDir(dir.Path(), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if ok, err := filepath.Match(glob, path); err != nil {
+			return err
+		} else if !ok {
+			return nil
+		}
+		ext := filepath.Ext(path)
+		output := path[:len(path)-len(ext)] + outExt
+		outGoal := prj.Goal(File(output))
+		outGoals = append(outGoals, outGoal)
+		outGoal.By(cnv, prj.Goal(File(path)))
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(outGoals) > 0 {
+		res.ImpliedBy(outGoals...)
+	}
+	return nil
 }
