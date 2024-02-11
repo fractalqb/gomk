@@ -9,17 +9,6 @@ import (
 )
 
 var (
-	// As long as we don't have https://github.com/golang/go/issues/62418
-	// create a logger that can change level.
-	// (IMHO git.fractalqb.de/fractalqb/qblog has more readable output)
-	logLevel slog.LevelVar
-	log      = slog.New(slog.NewTextHandler(
-		os.Stderr,
-		&slog.HandlerOptions{
-			Level: &logLevel,
-		},
-	))
-
 	// go generate ./...
 	goGenerate = gomk.GoGenerate{FilesPkgs: []string{"./..."}}
 
@@ -30,10 +19,7 @@ var (
 	goVulnchk = gomk.GoVulncheck{Patterns: []string{"./..."}}
 
 	// go build -C <result-dir> -trimpath -s -w
-	goBuild = gomk.GoBuild{
-		TrimPath: true,
-		LDFlags:  "-s -w",
-	}
+	goBuild = gomk.GoBuild{TrimPath: true}
 
 	writeDot bool
 )
@@ -43,11 +29,13 @@ func flags() {
 	flag.BoolVar(&writeDot, "dot", writeDot, "Write graphviz file to stdout and exit")
 	flag.Parse()
 	if *fLog != "" {
-		err := logLevel.UnmarshalText([]byte(*fLog))
+		var lvv slog.LevelVar
+		err := lvv.UnmarshalText([]byte(*fLog))
 		if err != nil {
-			log.Error(err.Error())
+			slog.Error(err.Error())
 			os.Exit(1)
 		}
+		slog.SetLogLoggerLevel(lvv.Level())
 	}
 }
 
@@ -80,14 +68,13 @@ func main() {
 	}
 
 	builder := gomk.Builder{Env: gomk.DefaultEnv()}
-	builder.Env.Log = log
 	if flag.NArg() == 0 {
 		if err := builder.Project(prj); err != nil {
-			log.Error(err.Error())
+			slog.Error(err.Error())
 		}
 	} else {
 		if err := builder.NamedGoals(prj, flag.Args()...); err != nil {
-			log.Error(err.Error())
+			slog.Error(err.Error())
 		}
 	}
 }

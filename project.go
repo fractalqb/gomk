@@ -52,7 +52,7 @@ func (prj *Project) FindGoal(name string) *Goal {
 }
 
 func (prj *Project) Name(in *Project) string {
-	pp := prj.relPath(prj.Dir)
+	pp := in.relPath(prj.Dir)
 	if prj == nil {
 		return filepath.Base(pp)
 	}
@@ -122,12 +122,12 @@ func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
 		tn := reflect.Indirect(reflect.ValueOf(g.Artefact)).Type().Name()
 		var updMode string
 		if len(g.ResultOf) > 1 {
-			switch g.UpdateMode & AllActions {
-			case OneAction:
+			switch g.UpdateMode.Actions() {
+			case UpdOneAction:
 				updMode = " 1"
-			case SomeActions:
+			case UpdSomeActions:
 				updMode = " +"
-			case AllActions:
+			case UpdAllActions:
 				updMode = " *"
 			}
 		}

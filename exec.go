@@ -45,8 +45,6 @@ func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
 			slog.String("dir", cmd.Dir),
 			slog.String("error", err.Error()),
 		)
-	} else {
-		env.Log.Debug("done with `cmd`", slog.String("cmd", cmd.String()))
 	}
 	return err
 }

@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"log/slog"
 )
 
 type FsCopy struct {
@@ -15,23 +17,30 @@ type FsCopy struct {
 }
 
 func (cp FsCopy) BuildAction(prj *Project, premises, results []*Goal) (*Action, error) {
-	check := func(g *Goal) error {
+	check := func(g *Goal) (bool, error) {
 		switch g.Artefact.(type) {
 		case File:
-			return nil
+			return true, nil
 		case Directory:
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("FS copy: illegal artefact type %T", g.Artefact)
+		return false, fmt.Errorf("FS copy: illegal artefact type %T", g.Artefact)
+	}
+	resultFiles := false
+	for _, r := range results {
+		isFile, err := check(r)
+		if err != nil {
+			return nil, err
+		}
+		resultFiles = resultFiles || isFile
 	}
 	for _, p := range premises {
-		if err := check(p); err != nil {
+		isFile, err := check(p)
+		if err != nil {
 			return nil, err
 		}
-	}
-	for _, r := range results {
-		if err := check(r); err != nil {
-			return nil, err
+		if resultFiles && !isFile {
+			return nil, errors.New("FS copy: cannot copy directory to file")
 		}
 	}
 	return prj.NewAction(premises, results, cp), nil
@@ -39,7 +48,12 @@ func (cp FsCopy) BuildAction(prj *Project, premises, results []*Goal) (*Action, 
 
 func (FsCopy) Describe(*Project) string { return "FS copy" }
 
-func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) error {
+func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) (err error) {
+	defer func() {
+		if err != nil {
+			env.Log.Error(err.Error())
+		}
+	}()
 	var prems []string
 	for _, pre := range a.Premises {
 		switch pre := pre.Artefact.(type) {
@@ -54,9 +68,9 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) error {
 	for _, res := range a.Results {
 		switch res := res.Artefact.(type) {
 		case File:
-			return cp.toFile(res.In(a.Project()), prems)
+			return cp.toFile(res.In(a.Project()), prems, env)
 		case Directory:
-			return cp.toDir(res.In(a.Project()), prems)
+			return cp.toDir(res.In(a.Project()), prems, env)
 		default:
 			return fmt.Errorf("FS copy: illegal result artefact type %T", res)
 		}
@@ -64,9 +78,17 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) error {
 	return nil
 }
 
-func (cp FsCopy) toFile(dst string, srcs []string) error {
+func (cp FsCopy) toFile(dst string, srcs []string, env *Env) error {
 	if cp.MkDirs {
 		os.MkdirAll(filepath.Dir(dst), 0777) // TODO Is umsak enough
+	}
+	if len(srcs) == 1 {
+		src := srcs[0]
+		st, err := os.Stat(src)
+		if err != nil {
+			return err
+		}
+		fsCopyFile(dst, src, st, env.Log)
 	}
 	w, err := os.Create(dst)
 	if err != nil {
@@ -74,6 +96,10 @@ func (cp FsCopy) toFile(dst string, srcs []string) error {
 	}
 	defer w.Close()
 	for _, src := range srcs {
+		env.Log.Debug("FS copy: append `src` -> `dst`",
+			slog.String(`src`, src),
+			slog.String(`dst`, dst),
+		)
 		r, err := os.Open(src)
 		if err != nil {
 			return err // TODO context
@@ -89,7 +115,7 @@ func (cp FsCopy) toFile(dst string, srcs []string) error {
 	return nil
 }
 
-func (cp FsCopy) toDir(dst string, srcs []string) error {
+func (cp FsCopy) toDir(dst string, srcs []string, env *Env) error {
 	if cp.MkDirs {
 		os.MkdirAll(dst, 0777) // TODO Is umsak enough
 	}
@@ -102,7 +128,8 @@ func (cp FsCopy) toDir(dst string, srcs []string) error {
 			return errors.New("NYI: FS copy dir -> dir")
 		} else {
 			bnm := filepath.Base(src)
-			if err = fsCopyFiles(filepath.Join(dst, bnm), src, st); err != nil {
+			err = fsCopyFile(filepath.Join(dst, bnm), src, st, env.Log)
+			if err != nil {
 				return err
 			}
 		}
@@ -110,7 +137,11 @@ func (cp FsCopy) toDir(dst string, srcs []string) error {
 	return nil
 }
 
-func fsCopyFiles(dst, src string, sstat fs.FileInfo) error {
+func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
+	log.Debug("FS copy: `src` -> `dst`",
+		slog.String(`src`, src),
+		slog.String(`dst`, dst),
+	)
 	w, err := os.OpenFile(dst,
 		os.O_CREATE|os.O_TRUNC|os.O_WRONLY,
 		sstat.Mode().Perm(),

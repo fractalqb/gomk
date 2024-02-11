@@ -14,19 +14,16 @@ import (
 type UpdateMode uint
 
 const (
-	OneAction   UpdateMode = 1
-	SomeActions UpdateMode = 2
-	AllActions  UpdateMode = 3
-	Concurrent  UpdateMode = 4
+	UpdAllActions  UpdateMode = 0
+	UpdSomeActions UpdateMode = 1
+	UpdOneAction   UpdateMode = 2
+	UpdUnordered   UpdateMode = 4
+
+	updActions UpdateMode = 3
 )
 
-func (m UpdateMode) Is(test UpdateMode) bool {
-	if t := test & 3; t != m&3 {
-		return false
-	}
-	t := test & Concurrent
-	return t == 0 || (m&Concurrent == Concurrent)
-}
+func (m UpdateMode) Actions() UpdateMode { return m & updActions }
+func (m UpdateMode) Ordered() bool       { return (m & UpdUnordered) == 0 }
 
 // A Goal is something you want to achieve in your [Project]. Each goal is
 // associated with an [Artefact] – generally something tangible that is
@@ -44,6 +41,8 @@ type Goal struct {
 
 	prj       *Project
 	lastBuild int64
+	stateAt   time.Time
+	stateHash []byte
 }
 
 func (g *Goal) By(a ActionBuilder, premises ...*Goal) *Goal {
@@ -93,6 +92,8 @@ func (g *Goal) String() string {
 
 type Artefact interface {
 	Name(in *Project) string
+	// StateAs returns the time at which the artefact reached its current state.
+	// If this cannot be provided, the zero Time is returned.
 	StateAt() time.Time
 }
 

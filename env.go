@@ -12,7 +12,10 @@ import (
 type Env struct {
 	In       io.Reader
 	Out, Err io.Writer
-	Log      *slog.Logger
+	// The logger used by [Actions]. The default is log/slog.Default(). Consider
+	// using git.fractalqb.de/fractalqb/qblog to get messages that are better
+	// suited to the human eye.
+	Log *slog.Logger
 
 	tags    map[string]string
 	delt    map[string]bool

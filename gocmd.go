@@ -20,13 +20,18 @@ func (t *GoTool) goExe() (string, error) {
 	return exec.LookPath("go")
 }
 
+// GoBuild is an [ActionBuilder] that expects exactly one result [Goal] with
+// either a [File] or [Directory] artefact. The created action will run 'go
+// build' with -C to change into the result's deirectory.
 type GoBuild struct {
 	GoTool
 	Install  bool
 	TrimPath bool
-	LDFlags  string
+	LDFlags  string   // See https://pkg.go.dev/cmd/link
 	SetVars  []string // See https://pkg.go.dev/cmd/link Flag: -X
 }
+
+var _ ActionBuilder = (*GoBuild)(nil)
 
 func (gb *GoBuild) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	var err error
@@ -85,6 +90,8 @@ type GoTest struct {
 	Pkgs []string
 }
 
+var _ ActionBuilder = (*GoTest)(nil)
+
 func (gt *GoTest) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	var err error
 	goTool, err := gt.goExe()
@@ -110,6 +117,8 @@ type GoGenerate struct {
 	Run       string
 	Skip      string
 }
+
+var _ ActionBuilder = (*GoGenerate)(nil)
 
 func (gg *GoGenerate) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	var err error
@@ -146,6 +155,8 @@ type GoRun struct {
 	Args []string
 }
 
+var _ ActionBuilder = (*GoRun)(nil)
+
 func (gr *GoRun) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	var err error
 	if gr.Pkg == "" {
@@ -178,6 +189,8 @@ type GoVulncheck struct {
 	Tags     []string
 	Patterns []string
 }
+
+var _ ActionBuilder = (*GoVulncheck)(nil)
 
 func (gvc *GoVulncheck) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	const govulncheck = "golang.org/x/vuln/cmd/govulncheck"

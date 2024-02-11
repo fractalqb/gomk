@@ -6,6 +6,10 @@ import (
 	"fmt"
 )
 
+// An Action is something you can do in your [Project] to achive a [Goal]. The
+// actual implementation of the action is an [Operation]. An action without an
+// operation is an "implicit" action, i.e. if all its premises are true, all
+// results of the action are implicitly given.
 type Action struct {
 	Premises []*Goal
 	Results  []*Goal

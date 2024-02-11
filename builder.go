@@ -2,7 +2,10 @@ package gomk
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
+	"hash"
+	"time"
 )
 
 type Builder struct {
@@ -19,19 +22,23 @@ func (bd *Builder) Project(prj *Project) error {
 
 // ProjectContext builds all leafs in prj.
 func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
+	start := time.Now()
 	prj.buildLock.Lock()
 	defer prj.buildLock.Unlock()
+
 	bd.bid = prj.buildID()
-	leafs := prj.Leafs()
 	if bd.Env == nil {
 		bd.Env = DefaultEnv()
 	}
-	bd.Env.Log = bd.Env.Log.With("project", prj.String())
+	bd.Env.Log = bd.Env.Log.With("project", prj.String(), "build", bd.bid)
+	bd.Env.Log.Info("`build` `project` in `dir`", `dir`, prj.Dir)
+	leafs := prj.Leafs()
 	for _, leaf := range leafs {
 		if err := bd.buildGoal(ctx, leaf); err != nil {
 			return err
 		}
 	}
+	bd.Env.Log.Info("`build` of `project` `took`", `took`, time.Since(start))
 	return nil
 }
 
@@ -90,6 +97,7 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
 		return nil
 	}
 	g.lastBuild = bd.bid
+	bd.Env.Log.Info("`build` `goal` in `project`", `goal`, g.String())
 	for _, act := range g.ResultOf {
 		for _, pre := range act.Premises {
 			if err := bd.buildGoal(ctx, pre); err != nil {
@@ -97,22 +105,52 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
 			}
 		}
 	}
-	return bd.updateGoal(ctx, g)
+	if bd.needsUpdate(g) {
+		return bd.updateGoal(ctx, g)
+	}
+	return nil
+}
+
+func (bd *Builder) needsUpdate(g *Goal) bool {
+	gt := g.Artefact.StateAt()
+	if gt.IsZero() {
+		return true
+	}
+	for _, a := range g.ResultOf {
+		for _, pre := range a.Premises {
+			pt := pre.Artefact.StateAt()
+			if pt.IsZero() || gt.Before(pt) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (bd *Builder) updateGoal(ctx context.Context, g *Goal) error {
-	bd.Env.Log.Info("update `goal` in `project`", `goal`, g.String())
-	if len(g.ResultOf) == 0 {
-		return nil
-	}
-	if g.UpdateMode.Is(AllActions) {
-		for _, a := range g.ResultOf {
-			if err := a.RunContext(ctx, bd.Env); err != nil {
-				return err
+	if len(g.ResultOf) > 0 {
+		if g.UpdateMode.Actions() == UpdAllActions {
+			for _, a := range g.ResultOf {
+				if err := a.RunContext(ctx, bd.Env); err != nil {
+					return err
+				}
 			}
+		} else if err := g.ResultOf[0].RunContext(ctx, bd.Env); err != nil {
+			return err
 		}
-		return nil
-	} else {
-		return g.ResultOf[0].RunContext(ctx, bd.Env)
 	}
+	g.stateAt = g.Artefact.StateAt()
+	if ha, ok := g.Artefact.(HashableArtefact); ok {
+		h := bd.newHash()
+		if err := ha.WriteHash(h); err != nil {
+			return err
+		}
+		g.stateHash = h.Sum(nil)
+	}
+	return nil
+}
+
+func (bd *Builder) newHash() hash.Hash {
+	// TODO is there any cryptographic relevance in the use of this hash? If yes => Change!
+	return md5.New()
 }
