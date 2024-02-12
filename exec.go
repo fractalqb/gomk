@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type CmdOp struct {
@@ -18,6 +19,8 @@ type CmdOp struct {
 	InFile, OutFile string
 	Desc            string
 }
+
+var _ Operation = (*CmdOp)(nil)
 
 func (op *CmdOp) Describe(prj *Project) string {
 	if op.Desc == "" {
@@ -72,6 +75,21 @@ func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
 }
 
 type PipeOp []CmdOp
+
+var _ Operation = PipeOp{}
+
+func (po PipeOp) Describe(prj *Project) string {
+	if len(po) == 0 {
+		return "empty pipe"
+	}
+	var sb strings.Builder
+	sb.WriteString(po[0].Describe(prj))
+	for _, o := range po[1:] {
+		sb.WriteByte('|')
+		sb.WriteString(o.Describe(prj))
+	}
+	return sb.String()
+}
 
 func (po PipeOp) Do(ctx context.Context, a *Action, env *Env) error {
 	var (

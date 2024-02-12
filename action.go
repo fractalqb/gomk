@@ -24,11 +24,12 @@ func (a *Action) Run(env *Env) error {
 }
 
 func (a *Action) RunContext(ctx context.Context, env *Env) error {
-	if env == nil {
-		env = DefaultEnv()
-	}
+	env.Log.Debug("run `action`", `action`, a.String())
 	if a.Op == nil {
 		return nil
+	}
+	if env == nil {
+		env = DefaultEnv()
 	}
 	return a.Op.Do(ctx, a, env)
 }
@@ -86,6 +87,8 @@ type badOp struct {
 	op  Operation
 	err error
 }
+
+var _ Operation = badOp{}
 
 func (bop badOp) Describe(prj *Project) string {
 	if bop.op == nil {

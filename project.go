@@ -42,6 +42,8 @@ func (prj *Project) Goal(atf Artefact) *Goal {
 	g := &Goal{
 		Artefact: atf,
 		prj:      prj,
+		stateAt:  atf.StateAt(),
+		// TODO stateHash – without builder… impossible
 	}
 	prj.goals[name] = g
 	return g

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"git.fractalqb.de/fractalqb/gomk"
+	"git.fractalqb.de/fractalqb/qblog"
 )
 
 var (
@@ -21,21 +22,18 @@ var (
 	// go build -C <result-dir> -trimpath -s -w
 	goBuild = gomk.GoBuild{TrimPath: true}
 
-	writeDot bool
+	clean, dryrun bool
+	writeDot      bool
 )
 
 func flags() {
 	fLog := flag.String("log", "", "Set log level")
 	flag.BoolVar(&writeDot, "dot", writeDot, "Write graphviz file to stdout and exit")
+	flag.BoolVar(&clean, "clean", clean, "Clean project")
+	flag.BoolVar(&dryrun, "n", dryrun, "Dryrun")
 	flag.Parse()
 	if *fLog != "" {
-		var lvv slog.LevelVar
-		err := lvv.UnmarshalText([]byte(*fLog))
-		if err != nil {
-			slog.Error(err.Error())
-			os.Exit(1)
-		}
-		slog.SetLogLoggerLevel(lvv.Level())
+		qblog.DefaultConfig.ParseFlag(*fLog)
 	}
 }
 
@@ -78,7 +76,17 @@ func main() {
 		return
 	}
 
-	builder := gomk.Builder{Env: gomk.DefaultEnv()}
+	if clean {
+		log := qblog.New(&qblog.DefaultConfig)
+		err := gomk.Clean(prj, dryrun, log.Logger)
+		if err != nil {
+			log.Error(err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+
+	var builder gomk.Builder
 	if flag.NArg() == 0 {
 		if err := builder.Project(prj); err != nil {
 			slog.Error(err.Error())

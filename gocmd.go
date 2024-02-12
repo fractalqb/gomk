@@ -27,7 +27,7 @@ type GoBuild struct {
 	GoTool
 	Install  bool
 	TrimPath bool
-	LDFlags  string   // See https://pkg.go.dev/cmd/link
+	LDFlags  []string // See https://pkg.go.dev/cmd/link
 	SetVars  []string // See https://pkg.go.dev/cmd/link Flag: -X
 }
 
@@ -73,14 +73,24 @@ func (gb *GoBuild) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	if gb.TrimPath {
 		op.Args = append(op.Args, "-trimpath")
 	}
-	var ldflags strings.Builder
-	if gb.LDFlags != "" {
-		ldflags.WriteString(gb.LDFlags)
+	var ldFlags strings.Builder
+	for _, f := range gb.LDFlags {
+		if f != "" {
+			if ldFlags.Len() > 0 {
+				ldFlags.WriteByte(' ')
+			}
+			ldFlags.WriteString(f)
+		}
 	}
 	for _, v := range gb.SetVars {
-		fmt.Fprintf(&ldflags, " -X %s", v)
+		if ldFlags.Len() > 0 {
+			ldFlags.WriteByte(' ')
+		}
+		fmt.Fprintf(&ldFlags, " -X %s", v)
 	}
-	op.Args = append(op.Args, "-ldflags", ldflags.String())
+	if ldFlags.Len() > 0 {
+		op.Args = append(op.Args, "-ldflags", ldFlags.String())
+	}
 	return prj.NewAction(ps, rs, op), nil
 }
 

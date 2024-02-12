@@ -7,14 +7,16 @@ import (
 	"maps"
 	"os"
 	"strings"
+
+	"git.fractalqb.de/fractalqb/qblog"
 )
 
 type Env struct {
 	In       io.Reader
 	Out, Err io.Writer
-	// The logger used by [Actions]. The default is log/slog.Default(). Consider
-	// using git.fractalqb.de/fractalqb/qblog to get messages that are better
-	// suited to the human eye.
+	// The logger used by [Actions]. The default uses
+	// git.fractalqb.de/fractalqb/qblog to get messages that are better suited
+	// to the human eye.
 	Log *slog.Logger
 
 	tags    map[string]string
@@ -29,7 +31,7 @@ func DefaultEnv() *Env {
 		In:   os.Stdin,
 		Out:  os.Stdout,
 		Err:  os.Stderr,
-		Log:  slog.Default(),
+		Log:  qblog.New(&qblog.DefaultConfig).Logger,
 		tags: make(map[string]string),
 	}
 	for _, evar := range os.Environ() {

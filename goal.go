@@ -3,6 +3,7 @@ package gomk
 import (
 	"errors"
 	"fmt"
+	"hash"
 	"reflect"
 	"time"
 )
@@ -10,10 +11,18 @@ import (
 type UpdateMode uint
 
 const (
-	UpdAllActions  UpdateMode = 0
+	// All actions must be run to reach the goal.
+	UpdAllActions UpdateMode = 0
+	// All actions with changed state must be run to reach the goal.
 	UpdSomeActions UpdateMode = 1
-	UpdOneAction   UpdateMode = 2
-	UpdUnordered   UpdateMode = 4
+	// Only one of the actions wit changed state has to be run to reach the
+	// goal.
+	UpdAnyAction UpdateMode = 2
+	// Only one action must have changed state. Then the goal is reached by
+	// running that action.
+	UpdOneAction UpdateMode = 3
+
+	UpdUnordered UpdateMode = 4
 
 	updActions UpdateMode = 3
 )
@@ -59,6 +68,11 @@ func (g *Goal) Project() *Project { return g.prj }
 
 func (g *Goal) Name() string { return g.Artefact.Name(g.Project()) }
 
+func (g *Goal) IsAbstract() bool {
+	_, ok := g.Artefact.(Abstract)
+	return ok
+}
+
 // Valid checks all premise and result actions of g using [Action.Valid] and
 // returns g along with all collected errors, if any.
 func (g *Goal) Valid() (*Goal, error) {
@@ -97,6 +111,20 @@ type Artefact interface {
 
 type Abstract string
 
+var _ Artefact = Abstract("")
+
 func (a Abstract) Name(*Project) string { return string(a) }
 
 func (a Abstract) StateAt() time.Time { return time.Time{} }
+
+type HashableArtefact interface {
+	Artefact
+	StateHash(hash.Hash) error
+}
+
+func HashArtefcat(a Artefact, h hash.Hash) (bool, error) {
+	if ha, ok := a.(HashableArtefact); ok {
+		return true, ha.StateHash(h)
+	}
+	return false, nil
+}

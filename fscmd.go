@@ -16,10 +16,21 @@ import (
 
 type Directory string
 
-// Implement [Artefact]
+var _ Artefact = Directory("")
+
+func (d Directory) In(prj *Project) string { return prj.relPath(d.Path()) }
+
+func (d Directory) Path() string { return string(d) }
+
+func (d Directory) Stat() (fs.FileInfo, error) { return os.Stat(d.Path()) }
+
+func (d Directory) Exists() bool {
+	_, err := d.Stat()
+	return err == nil || !errors.Is(err, os.ErrNotExist)
+}
+
 func (d Directory) Name(prj *Project) string { return d.In(prj) }
 
-// Implement [Artefact]
 func (d Directory) StateAt() time.Time {
 	st, err := d.Stat()
 	if err != nil || !st.IsDir() {
@@ -28,20 +39,23 @@ func (d Directory) StateAt() time.Time {
 	return st.ModTime()
 }
 
-func (d Directory) In(prj *Project) string { return prj.relPath(d.Path()) }
-
-func (d Directory) Path() string { return string(d) }
-
-func (d Directory) Stat() (fs.FileInfo, error) { return os.Stat(d.Path()) }
-
-type HashableArtefact interface {
-	Artefact
-	WriteHash(hash.Hash) error
-}
-
 type File string
 
-// Implement [Artefact]
+var _ HashableArtefact = File("")
+
+func (f File) In(prj *Project) string { return prj.relPath(f.Path()) }
+
+func (f File) Path() string { return string(f) }
+
+func (f File) Stat() (fs.FileInfo, error) { return os.Stat(f.Path()) }
+
+func (f File) Exists() bool {
+	_, err := f.Stat()
+	return err == nil || !errors.Is(err, os.ErrNotExist)
+}
+
+func (f File) Name(prj *Project) string { return f.In(prj) }
+
 func (f File) StateAt() time.Time {
 	st, err := f.Stat()
 	if err != nil || st.IsDir() {
@@ -50,16 +64,7 @@ func (f File) StateAt() time.Time {
 	return st.ModTime()
 }
 
-// Implement [Artefact]
-func (f File) Name(prj *Project) string { return f.In(prj) }
-
-func (f File) In(prj *Project) string { return prj.relPath(f.Path()) }
-
-func (f File) Path() string { return string(f) }
-
-func (f File) Stat() (fs.FileInfo, error) { return os.Stat(f.Path()) }
-
-func (f File) WriteHash(h hash.Hash) error {
+func (f File) StateHash(h hash.Hash) error {
 	r, err := os.Open(f.Path())
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -75,6 +80,11 @@ func (f File) WriteHash(h hash.Hash) error {
 type FsCopy struct {
 	MkDirs bool
 }
+
+var (
+	_ ActionBuilder = FsCopy{}
+	_ Operation     = FsCopy{}
+)
 
 func (cp FsCopy) BuildAction(prj *Project, premises, results []*Goal) (*Action, error) {
 	check := func(g *Goal) (bool, error) {
@@ -185,7 +195,9 @@ func (cp FsCopy) toDir(dst string, srcs []string, env *Env) error {
 			return err
 		}
 		if st.IsDir() {
-			return errors.New("NYI: FS copy dir -> dir")
+			if err = sfCopyDir(dst, src, env.Log); err != nil {
+				return err
+			}
 		} else {
 			bnm := filepath.Base(src)
 			err = fsCopyFile(filepath.Join(dst, bnm), src, st, env.Log)
@@ -197,7 +209,37 @@ func (cp FsCopy) toDir(dst string, srcs []string, env *Env) error {
 	return nil
 }
 
+func sfCopyDir(dst, src string, log *slog.Logger) error {
+	if src == dst {
+		return nil
+	}
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, _ error) error {
+		if path == src {
+			return nil
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		dpath := filepath.Join(dst, rel)
+		if d.IsDir() {
+			if err := os.Mkdir(dpath, 0777); err != nil {
+				return err
+			}
+		} else if stat, err := d.Info(); err != nil {
+			return err
+		} else if err := fsCopyFile(dpath, path, stat, log); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
+}
+
 func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
+	if src == dst {
+		return nil
+	}
 	log.Debug("FS copy: `src` -> `dst`",
 		slog.String(`src`, src),
 		slog.String(`dst`, dst),
