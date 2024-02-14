@@ -3,11 +3,14 @@ package gomk
 import (
 	"context"
 	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"hash"
+	"log/slog"
 	"time"
 )
 
+// TODO Add a "dry-run" option
 type Builder struct {
 	Env    *Env
 	LogDir string
@@ -108,19 +111,25 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
 			}
 		}
 	}
+	chgs := bd.checkPreSates(g)
+	if len(chgs) == 0 {
+		bd.Env.Log.Debug("`goal` already up-to-date", `goal`, g.String())
+		bd.logGoalState(ctx, g)
+		return nil
+	}
 	var (
 		updated bool
 		err     error
 	)
 	switch g.UpdateMode.Actions() {
 	case UpdAllActions:
-		updated, err = bd.updateAll(ctx, g)
+		updated, err = bd.updateAll(ctx, g, chgs)
 	case UpdSomeActions:
-		updated, err = bd.updateSome(ctx, g)
+		updated, err = bd.updateSome(ctx, g, chgs)
 	case UpdAnyAction:
-		updated, err = bd.updateAny(ctx, g)
+		updated, err = bd.updateAny(ctx, g, chgs)
 	case UpdOneAction:
-		updated, err = bd.updateOne(ctx, g)
+		updated, err = bd.updateOne(ctx, g, chgs)
 	default:
 		err = fmt.Errorf("illegal update mode actions: %d", g.UpdateMode.Actions())
 	}
@@ -137,14 +146,39 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
 			g.stateHash = h.Sum(nil)
 		}
 	}
+	bd.logGoalState(ctx, g)
 	return nil
 }
 
-func (bd *Builder) updateAll(ctx context.Context, g *Goal) (bool, error) {
-	chgs := bd.checkPreSates(g)
-	if len(chgs) == 0 { // No changes
-		return false, nil
+func (bd *Builder) logGoalState(ctx context.Context, g *Goal) {
+	if !bd.Env.Log.Enabled(ctx, slog.LevelDebug) {
+		return
 	}
+	hash2str := hex.EncodeToString
+	if g.stateAt.IsZero() {
+		if g.stateHash == nil {
+			bd.Env.Log.Debug("no state for `goal`", `goal`, g.String())
+		} else {
+			bd.Env.Log.Debug("`goal` state `hash`",
+				`goal`, g.String(),
+				`hash`, hash2str(g.stateHash),
+			)
+		}
+	} else if g.stateHash == nil {
+		bd.Env.Log.Debug("`goal` state `at`",
+			`goal`, g.String(),
+			`at`, g.stateAt,
+		)
+	} else {
+		bd.Env.Log.Debug("`goal` state `at` `hash`",
+			`goal`, g.String(),
+			`at`, g.stateAt,
+			`hash`, hash2str(g.stateHash),
+		)
+	}
+}
+
+func (bd *Builder) updateAll(ctx context.Context, g *Goal, chgs []int) (bool, error) {
 	for i, a := range g.ResultOf {
 		if err := a.RunContext(ctx, bd.Env); err != nil {
 			return i > 0, err // TODO really i>0 ???
@@ -153,11 +187,7 @@ func (bd *Builder) updateAll(ctx context.Context, g *Goal) (bool, error) {
 	return true, nil
 }
 
-func (bd *Builder) updateSome(ctx context.Context, g *Goal) (bool, error) {
-	chgs := bd.checkPreSates(g)
-	if len(chgs) == 0 { // No changes
-		return false, nil
-	}
+func (bd *Builder) updateSome(ctx context.Context, g *Goal, chgs []int) (bool, error) {
 	for i, idx := range chgs {
 		if err := g.ResultOf[idx].RunContext(ctx, bd.Env); err != nil {
 			return i > 0, err // TODO really i>0 ???
@@ -167,11 +197,7 @@ func (bd *Builder) updateSome(ctx context.Context, g *Goal) (bool, error) {
 
 }
 
-func (bd *Builder) updateAny(ctx context.Context, g *Goal) (bool, error) {
-	chgs := bd.checkPreSates(g)
-	if len(chgs) == 0 { // No changes
-		return false, nil
-	}
+func (bd *Builder) updateAny(ctx context.Context, g *Goal, chgs []int) (bool, error) {
 	if len(chgs) > 0 {
 		err := g.ResultOf[chgs[0]].RunContext(ctx, bd.Env)
 		return err == nil, err // TODO really err==nil ???
@@ -179,8 +205,7 @@ func (bd *Builder) updateAny(ctx context.Context, g *Goal) (bool, error) {
 	return true, nil
 }
 
-func (bd *Builder) updateOne(ctx context.Context, g *Goal) (bool, error) {
-	chgs := bd.checkPreSates(g)
+func (bd *Builder) updateOne(ctx context.Context, g *Goal, chgs []int) (bool, error) {
 	switch len(chgs) {
 	case 0:
 		return false, nil

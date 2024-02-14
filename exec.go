@@ -146,13 +146,19 @@ type piperw struct {
 	w *io.PipeWriter
 }
 
-type ConverCmd struct {
-	Exe    string
-	Output string // 1, 2, stdout, <output-flag> e.g. "-o"
+type ConvertCmd struct {
+	Exe string
+	// Output controls how the output of the convert command is to be written to
+	// the result file.
+	// "1"     : The output file name is put after .Args before the input file name.
+	// "2"     : The output file name is put after input file name, i.e. as the last argument.
+	// "stdout": Stdout is redirected to the output file.
+	// "-"<opt>: Flags to set output file name, e.g. "-o".
+	Output string
 	Args   []string
 }
 
-func (cc *ConverCmd) BuildAction(prj *Project, premises, results []*Goal) (*Action, error) {
+func (cc *ConvertCmd) BuildAction(prj *Project, premises, results []*Goal) (*Action, error) {
 	if len(premises) != 1 || len(results) != 1 {
 		return nil, errors.New("ConvertCmd requires one premise and one result file goal")
 	}

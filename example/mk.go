@@ -58,12 +58,18 @@ func main() {
 		By(&goBuild, goalTest)
 
 	// requires 'markdown' to be in the path
-	gomk.FsConvert(prj, "doc", "*/*.md", ".html", &gomk.ConverCmd{
-		Exe:    "markdown",
-		Output: "stdout",
+	gomk.FsConvert(prj, "doc", "*/*.md", gomk.FsConverter{
+		Ext: ".html",
+		Converter: &gomk.ConvertCmd{
+			Exe:    "markdown",
+			Output: "stdout",
+		},
 	})
 	// requires 'plantuml' to be in the path
-	gomk.FsConvert(prj, "doc", "*/*.puml", ".png", &gomk.ConverCmd{Exe: "plantuml"})
+	gomk.FsConvert(prj, "doc", "*/*.puml", gomk.FsConverter{
+		Ext:       ".png",
+		Converter: &gomk.ConvertCmd{Exe: "plantuml"},
+	})
 
 	prj.Goal(gomk.Directory("dist")).
 		By(gomk.FsCopy{MkDirs: true}, goalBuildFoo, goalBuildBar)

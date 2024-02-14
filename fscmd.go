@@ -16,7 +16,7 @@ import (
 
 type Directory string
 
-var _ Artefact = Directory("")
+var _ HashableArtefact = Directory("")
 
 func (d Directory) In(prj *Project) string { return prj.relPath(d.Path()) }
 
@@ -37,6 +37,18 @@ func (d Directory) StateAt() time.Time {
 		return time.Time{}
 	}
 	return st.ModTime()
+}
+
+func (d Directory) StateHash(h hash.Hash) error {
+	entries, err := os.ReadDir(string(d))
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		io.WriteString(h, e.Name())
+		h.Write([]byte{'\n'})
+	}
+	return nil
 }
 
 type File string
@@ -263,7 +275,25 @@ func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
 	return err
 }
 
-func FsConvert(prj *Project, dir Directory, glob, outExt string, cnv ActionBuilder) error {
+type FsConverter struct {
+	Ext       string
+	Converter ActionBuilder
+}
+
+func (s FsConverter) ext() string {
+	if s.Ext == "" {
+		return ""
+	}
+	if s.Ext[0] != '.' {
+		return "." + s.Ext
+	}
+	return s.Ext
+}
+
+func FsConvert(prj *Project, dir Directory, glob string, steps ...FsConverter) error {
+	if len(steps) == 0 {
+		return nil
+	}
 	res := prj.Goal(dir)
 	var outGoals []*Goal
 	err := filepath.WalkDir(dir.Path(), func(path string, d fs.DirEntry, err error) error {
@@ -279,10 +309,14 @@ func FsConvert(prj *Project, dir Directory, glob, outExt string, cnv ActionBuild
 			return nil
 		}
 		ext := filepath.Ext(path)
-		output := path[:len(path)-len(ext)] + outExt
-		outGoal := prj.Goal(File(output))
-		outGoals = append(outGoals, outGoal)
-		outGoal.By(cnv, prj.Goal(File(path)))
+		base := path[:len(path)-len(ext)]
+		var resGoal *Goal
+		for _, step := range steps {
+			resFile := File(base + step.ext())
+			resGoal = prj.Goal(resFile).By(step.Converter, prj.Goal(File(path)))
+			path = resFile.Path()
+		}
+		outGoals = append(outGoals, resGoal)
 		return nil
 	})
 	if err != nil {
