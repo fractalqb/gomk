@@ -3,7 +3,6 @@ package gomk
 import (
 	"errors"
 	"fmt"
-	"hash"
 	"reflect"
 	"time"
 )
@@ -55,8 +54,6 @@ type Goal struct {
 
 	prj       *Project
 	lastBuild int64
-	stateAt   time.Time
-	stateHash []byte
 }
 
 func (g *Goal) By(a ActionBuilder, premises ...*Goal) *Goal {
@@ -129,15 +126,3 @@ var _ Artefact = Abstract("")
 func (a Abstract) Name(*Project) string { return string(a) }
 
 func (a Abstract) StateAt() time.Time { return time.Time{} }
-
-type HashableArtefact interface {
-	Artefact
-	StateHash(hash.Hash) error
-}
-
-func HashArtefcat(a Artefact, h hash.Hash) (bool, error) {
-	if ha, ok := a.(HashableArtefact); ok {
-		return true, ha.StateHash(h)
-	}
-	return false, nil
-}

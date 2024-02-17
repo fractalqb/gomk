@@ -3,7 +3,6 @@ package gomk
 import (
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,25 +11,21 @@ import (
 	"time"
 )
 
-type HashFactory interface{ NewHash() hash.Hash }
-
 type Project struct {
 	Dir string
 
 	goals     map[string]*Goal
-	mkHash    HashFactory
 	buildLock sync.Mutex
 	lastBuild int64
 }
 
-func NewProject(dir string, h HashFactory) *Project {
+func NewProject(dir string) *Project {
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
 	prj := &Project{
-		Dir:    dir,
-		goals:  make(map[string]*Goal),
-		mkHash: h,
+		Dir:   dir,
+		goals: make(map[string]*Goal),
 	}
 	return prj
 }
@@ -47,13 +42,6 @@ func (prj *Project) Goal(atf Artefact) *Goal {
 	g := &Goal{
 		Artefact: atf,
 		prj:      prj,
-		stateAt:  atf.StateAt(),
-	}
-	if ha, ok := atf.(HashableArtefact); ok && prj.mkHash != nil {
-		h := prj.mkHash.NewHash()
-		if ha.StateHash(h) == nil { // TODO OK? err => just no hash
-			g.stateHash = h.Sum(nil)
-		}
 	}
 	prj.goals[name] = g
 	return g

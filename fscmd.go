@@ -15,7 +15,7 @@ import (
 )
 
 type FsArtefact interface {
-	HashableArtefact
+	Artefact
 	Path() string
 	Rel(*Project) string
 	Stat() (fs.FileInfo, error)
@@ -52,18 +52,6 @@ func (d DirList) StateAt() time.Time {
 		return time.Time{}
 	}
 	return st.ModTime()
-}
-
-func (d DirList) StateHash(h hash.Hash) error {
-	entries, err := os.ReadDir(string(d))
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		io.WriteString(h, e.Name())
-		h.Write([]byte{'\n'})
-	}
-	return nil
 }
 
 type DirContent string
@@ -106,18 +94,6 @@ func (d DirContent) StateAt() (t time.Time) {
 	return t
 }
 
-func (d DirContent) StateHash(h hash.Hash) error {
-	return filepath.WalkDir(d.Path(), func(path string, d fs.DirEntry, err error) error {
-		switch {
-		case err != nil:
-			return err
-		case d.IsDir():
-			return nil
-		}
-		return File(path).StateHash(h)
-	})
-}
-
 type File string
 
 var _ FsArtefact = File("")
@@ -141,19 +117,6 @@ func (f File) StateAt() time.Time {
 		return time.Time{}
 	}
 	return st.ModTime()
-}
-
-func (f File) StateHash(h hash.Hash) error {
-	r, err := os.Open(f.Path())
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil
-	case err != nil:
-		return err
-	}
-	defer r.Close()
-	_, err = io.Copy(h, r)
-	return err
 }
 
 type FsCopy struct {
@@ -357,9 +320,14 @@ func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
 	return err
 }
 
-func (cp FsCopy) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
-	// TODO FsCopy.WriteHash()
-	return errors.New("NYI: FsCopy.WriteHash()")
+func (cp FsCopy) WriteHash(h hash.Hash, a *Action, _ *Env) (bool, error) {
+	for _, pre := range a.Premises {
+		fmt.Fprintln(h, pre.Name())
+	}
+	for _, res := range a.Results {
+		fmt.Fprintln(h, res.Name())
+	}
+	return true, nil
 }
 
 type FsConverter struct {

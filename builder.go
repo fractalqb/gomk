@@ -3,13 +3,11 @@ package gomk
 import (
 	"context"
 	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -125,125 +123,83 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
 			}
 		}
 	}
-	chgs := bd.checkPreSates(g)
+	chgs := bd.checkPreTimes(g)
 	if len(chgs) == 0 {
 		bd.Env.Log.Debug("`goal` already up-to-date", `goal`, g.String())
-		bd.logGoalState(ctx, g)
 		return nil
 	}
-	var (
-		updated bool
-		err     error
-	)
+	var err error
 	switch g.UpdateMode.Actions() {
 	case UpdAllActions:
-		updated, err = bd.updateAll(ctx, g, chgs)
+		err = bd.updateAll(ctx, g, chgs)
 	case UpdSomeActions:
-		updated, err = bd.updateSome(ctx, g, chgs)
+		err = bd.updateSome(ctx, g, chgs)
 	case UpdAnyAction:
-		updated, err = bd.updateAny(ctx, g, chgs)
+		err = bd.updateAny(ctx, g, chgs)
 	case UpdOneAction:
-		updated, err = bd.updateOne(ctx, g, chgs)
+		err = bd.updateOne(ctx, g, chgs)
 	default:
 		err = fmt.Errorf("illegal update mode actions: %d", g.UpdateMode.Actions())
 	}
 	if err != nil {
 		return err
 	}
-	if updated {
-		g.stateAt = g.Artefact.StateAt()
-		if ha, ok := g.Artefact.(HashableArtefact); ok {
-			h := bd.NewHash()
-			if err := ha.StateHash(h); err != nil {
-				return err
-			}
-			g.stateHash = h.Sum(nil)
-		}
-	}
-	bd.logGoalState(ctx, g)
 	return nil
 }
 
-func (bd *Builder) logGoalState(ctx context.Context, g *Goal) {
-	if !bd.Env.Log.Enabled(ctx, slog.LevelDebug) {
-		return
-	}
-	hash2str := hex.EncodeToString
-	if g.stateAt.IsZero() {
-		if g.stateHash == nil {
-			bd.Env.Log.Debug("no state for `goal`", `goal`, g.String())
-		} else {
-			bd.Env.Log.Debug("`goal` state `hash`",
-				`goal`, g.String(),
-				`hash`, hash2str(g.stateHash),
-			)
-		}
-	} else if g.stateHash == nil {
-		bd.Env.Log.Debug("`goal` state `at`",
-			`goal`, g.String(),
-			`at`, g.stateAt,
-		)
-	} else {
-		bd.Env.Log.Debug("`goal` state `at` `hash`",
-			`goal`, g.String(),
-			`at`, g.stateAt,
-			`hash`, hash2str(g.stateHash),
-		)
-	}
-}
-
-func (bd *Builder) updateAll(ctx context.Context, g *Goal, chgs []int) (bool, error) {
-	for i, a := range g.ResultOf {
+func (bd *Builder) updateAll(ctx context.Context, g *Goal, chgs []int) error {
+	for _, a := range g.ResultOf {
 		if err := a.RunContext(ctx, bd.Env); err != nil {
-			return i > 0, err // TODO really i>0 ???
+			return err
 		}
 	}
-	return true, nil
+	return nil
 }
 
-func (bd *Builder) updateSome(ctx context.Context, g *Goal, chgs []int) (bool, error) {
-	for i, idx := range chgs {
+func (bd *Builder) updateSome(ctx context.Context, g *Goal, chgs []int) error {
+	for _, idx := range chgs {
 		if err := g.ResultOf[idx].RunContext(ctx, bd.Env); err != nil {
-			return i > 0, err // TODO really i>0 ???
+			return err
 		}
 	}
-	return true, nil
+	return nil
 
 }
 
-func (bd *Builder) updateAny(ctx context.Context, g *Goal, chgs []int) (bool, error) {
+func (bd *Builder) updateAny(ctx context.Context, g *Goal, chgs []int) error {
 	if len(chgs) > 0 {
 		err := g.ResultOf[chgs[0]].RunContext(ctx, bd.Env)
-		return err == nil, err // TODO really err==nil ???
+		return err
 	}
-	return true, nil
+	return nil
 }
 
-func (bd *Builder) updateOne(ctx context.Context, g *Goal, chgs []int) (bool, error) {
+func (bd *Builder) updateOne(ctx context.Context, g *Goal, chgs []int) error {
 	switch len(chgs) {
 	case 0:
-		return false, nil
+		return nil
 	case 1:
 		err := g.ResultOf[chgs[0]].RunContext(ctx, bd.Env)
-		return err == nil, err // TODO really err==nil ???
+		return err
 	}
-	return false, fmt.Errorf("%d update actions for goal %s", len(chgs), g.Name())
+	return fmt.Errorf("%d update actions for goal %s", len(chgs), g.Name())
 }
 
-func (bd *Builder) checkPreSates(g *Goal) (chgs []int) {
+func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
+	gaTS := g.Artefact.StateAt()
 	for actIdx, act := range g.ResultOf {
-		actTS := g.Artefact.StateAt()
-		if actTS.IsZero() {
+		if gaTS.IsZero() {
 			chgs = append(chgs, actIdx)
 			continue
 		}
 	PREMISE_LOOP:
 		for _, pre := range act.Premises {
+			preTS := pre.Artefact.StateAt()
 			switch {
-			case pre.stateAt.IsZero():
+			case preTS.IsZero():
 				chgs = append(chgs, actIdx)
 				break PREMISE_LOOP
-			case actTS.Before(pre.stateAt):
+			case gaTS.Before(preTS):
 				chgs = append(chgs, actIdx)
 				break PREMISE_LOOP
 			}
@@ -252,7 +208,7 @@ func (bd *Builder) checkPreSates(g *Goal) (chgs []int) {
 	return chgs
 }
 
-func (bd *Builder) NewHash() hash.Hash {
+func (bd *Builder) newHash() hash.Hash {
 	// TODO is there any cryptographic relevance in the use of this hash? If yes => Change!
 	return md5.New()
 }

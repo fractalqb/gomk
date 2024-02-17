@@ -43,8 +43,7 @@ func flags() {
 func main() {
 	flags()
 
-	builder := gomk.Builder{} //LogDir: "build", MkDirMode: 0777}
-	prj := gomk.NewProject("", &builder)
+	prj := gomk.NewProject("")
 
 	goalGoGen := prj.Goal(gomk.Abstract("go-gen")).
 		By(&goGenerate)
@@ -102,6 +101,7 @@ func main() {
 		return
 	}
 
+	builder := gomk.Builder{} //LogDir: "build", MkDirMode: 0777}
 	if flag.NArg() == 0 {
 		if err := builder.Project(prj); err != nil {
 			slog.Error(err.Error())

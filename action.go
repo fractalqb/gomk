@@ -60,9 +60,9 @@ func (a *Action) String() string {
 	return a.Op.Describe(a.Project())
 }
 
-func (a *Action) WriteHash(h hash.Hash, env *Env) error {
+func (a *Action) WriteHash(h hash.Hash, env *Env) (bool, error) {
 	if a.Op == nil {
-		return nil
+		return false, nil
 	}
 	return a.Op.WriteHash(h, a, env)
 }
@@ -70,13 +70,7 @@ func (a *Action) WriteHash(h hash.Hash, env *Env) error {
 type Operation interface {
 	Describe(*Project) string
 	Do(context.Context, *Action, *Env) error
-	WriteHash(hash.Hash, *Action, *Env) error
-}
-
-type OperationFunc func(context.Context, *Action, *Env) error
-
-func (of OperationFunc) Do(ctx context.Context, a *Action, env *Env) error {
-	return of(ctx, a, env)
+	WriteHash(hash.Hash, *Action, *Env) (bool, error)
 }
 
 type ActionBuilder interface {
@@ -110,6 +104,6 @@ func (bop badOp) Do(_ context.Context, a *Action, _ *Env) error {
 	return fmt.Errorf("called %s", bop.Describe(a.Project()))
 }
 
-func (bop badOp) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
-	return fmt.Errorf("hash %s", bop.Describe(a.Project()))
+func (bop badOp) WriteHash(_ hash.Hash, a *Action, _ *Env) (bool, error) {
+	return false, fmt.Errorf("hash %s", bop.Describe(a.Project()))
 }

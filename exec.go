@@ -75,9 +75,16 @@ func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
 	return err
 }
 
-func (op *CmdOp) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
-	// TODO CmdOp.WriteHash()
-	return errors.New("NYI: CmdOp.WriteHash()")
+// TODO include environment values
+func (op *CmdOp) WriteHash(h hash.Hash, a *Action, _ *Env) (bool, error) {
+	fmt.Fprintln(h, op.CWD)
+	fmt.Fprintln(h, op.Exe)
+	for _, arg := range op.Args {
+		fmt.Fprintln(h, arg)
+	}
+	fmt.Fprintln(h, op.InFile)
+	fmt.Fprintln(h, op.OutFile)
+	return true, nil
 }
 
 type PipeOp []CmdOp
@@ -152,9 +159,14 @@ type piperw struct {
 	w *io.PipeWriter
 }
 
-func (po PipeOp) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
-	// TODO PipeOp.WriteHash()
-	return errors.New("NYI: PipeOp.WriteHash()")
+func (po PipeOp) WriteHash(h hash.Hash, a *Action, env *Env) (bool, error) {
+	for _, cmd := range po {
+		ok, err := cmd.WriteHash(h, a, env)
+		if !ok || err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 type ConvertCmd struct {
