@@ -45,7 +45,7 @@ func (gb *GoBuild) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	}
 	var chdir string
 	switch rs := rs[0].Artefact.(type) {
-	case Directory:
+	case DirList:
 		chdir = rs.Path()
 	case File:
 		chdir = filepath.Dir(rs.Path())

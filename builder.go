@@ -4,16 +4,24 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
+	"io"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
+
+	"git.fractalqb.de/fractalqb/qblog"
 )
 
 // TODO Add a "dry-run" option
 type Builder struct {
-	Env    *Env
-	LogDir string
+	Env       *Env
+	LogDir    string
+	MkDirMode fs.FileMode
 
 	bid int64
 }
@@ -33,6 +41,11 @@ func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
 	if bd.Env == nil {
 		bd.Env = DefaultEnv()
 	}
+	oldEnv, err := bd.prepLogDir()
+	if err != nil {
+		return err
+	}
+	defer func() { bd.restoreEnv(oldEnv) }()
 	bd.Env.Log = bd.Env.Log.With("project", prj.String(), "build", bd.bid)
 	bd.Env.Log.Info("`build` `project` in `dir`", `dir`, prj.Dir)
 	leafs := prj.Leafs()
@@ -49,6 +62,7 @@ func (bd *Builder) Goal(gs ...*Goal) error {
 	return bd.GoalsContext(context.Background(), gs...)
 }
 
+// TODO LogDir
 func (bd *Builder) GoalsContext(ctx context.Context, gs ...*Goal) error {
 	if len(gs) == 0 {
 		return nil
@@ -139,7 +153,7 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
 	if updated {
 		g.stateAt = g.Artefact.StateAt()
 		if ha, ok := g.Artefact.(HashableArtefact); ok {
-			h := bd.newHash()
+			h := bd.NewHash()
 			if err := ha.StateHash(h); err != nil {
 				return err
 			}
@@ -238,7 +252,76 @@ func (bd *Builder) checkPreSates(g *Goal) (chgs []int) {
 	return chgs
 }
 
-func (bd *Builder) newHash() hash.Hash {
+func (bd *Builder) NewHash() hash.Hash {
 	// TODO is there any cryptographic relevance in the use of this hash? If yes => Change!
 	return md5.New()
+}
+
+func (bd *Builder) restoreEnv(old *Env) {
+	if bd.Env == old {
+		return
+	}
+	if c, ok := bd.Env.Out.(io.Closer); ok {
+		c.Close()
+	}
+	if c, ok := bd.Env.Err.(io.Closer); ok {
+		c.Close()
+	}
+	bd.Env = old
+}
+
+func (bd *Builder) prepLogDir() (restore *Env, err error) {
+	if bd.LogDir == "" {
+		return bd.Env, nil
+	}
+	bdir := fmt.Sprintf("%s.%d", time.Now().Format("060102-150405"), bd.bid)
+	bdir = filepath.Join(bd.LogDir, bdir)
+	if bd.MkDirMode != 0 {
+		if err = os.MkdirAll(bdir, bd.MkDirMode); err != nil {
+			return bd.Env, err
+		}
+	} else if err = os.Mkdir(bdir, 0777); err != nil {
+		return bd.Env, err
+	}
+	outFile, err := os.Create(filepath.Join(bdir, "build.out"))
+	if err != nil {
+		return bd.Env, err
+	}
+	errFile, err := os.Create(filepath.Join(bdir, "build.err"))
+	if err != nil {
+		outFile.Close()
+		return bd.Env, err
+	}
+	restore = bd.Env
+	bd.Env = restore.Clone()
+	bd.Env.Out = stackedWriter{top: outFile, tail: restore.Out}
+	bd.Env.Err = stackedWriter{top: errFile, tail: restore.Err}
+	logCfg := qblog.DefaultConfig.Clone()
+	logCfg.SetWriter(bd.Env.Err)
+	bd.Env.Log = qblog.New(logCfg).Logger
+	return restore, nil
+}
+
+type stackedWriter struct {
+	top, tail io.Writer
+}
+
+func (w stackedWriter) Write(p []byte) (n int, err error) {
+	n1, err := w.top.Write(p)
+	n2, err2 := w.tail.Write(p)
+	if err2 != nil {
+		if err == nil {
+			err = err2
+		} else {
+			err = errors.Join(err, err2)
+		}
+	}
+	return n1 + n2, err
+}
+
+func (w stackedWriter) Close() error {
+	if c, ok := w.top.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }

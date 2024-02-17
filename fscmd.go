@@ -14,24 +14,39 @@ import (
 	"log/slog"
 )
 
-type Directory string
+type FsArtefact interface {
+	HashableArtefact
+	Path() string
+	Rel(*Project) string
+	Stat() (fs.FileInfo, error)
+	Exists() bool
+}
 
-var _ HashableArtefact = Directory("")
+type Directory interface {
+	FsArtefact
+	List() ([]fs.DirEntry, error)
+}
 
-func (d Directory) In(prj *Project) string { return prj.relPath(d.Path()) }
+type DirList string
 
-func (d Directory) Path() string { return string(d) }
+var _ Directory = DirList("")
 
-func (d Directory) Stat() (fs.FileInfo, error) { return os.Stat(d.Path()) }
+func (d DirList) Rel(prj *Project) string { return prj.relPath(d.Path()) }
 
-func (d Directory) Exists() bool {
+func (d DirList) Path() string { return string(d) }
+
+func (d DirList) Stat() (fs.FileInfo, error) { return os.Stat(d.Path()) }
+
+func (d DirList) Exists() bool {
 	_, err := d.Stat()
 	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
 
-func (d Directory) Name(prj *Project) string { return d.In(prj) }
+func (d DirList) List() ([]fs.DirEntry, error) { return os.ReadDir(string(d)) }
 
-func (d Directory) StateAt() time.Time {
+func (d DirList) Name(prj *Project) string { return d.Rel(prj) }
+
+func (d DirList) StateAt() time.Time {
 	st, err := d.Stat()
 	if err != nil || !st.IsDir() {
 		return time.Time{}
@@ -39,7 +54,7 @@ func (d Directory) StateAt() time.Time {
 	return st.ModTime()
 }
 
-func (d Directory) StateHash(h hash.Hash) error {
+func (d DirList) StateHash(h hash.Hash) error {
 	entries, err := os.ReadDir(string(d))
 	if err != nil {
 		return err
@@ -51,11 +66,63 @@ func (d Directory) StateHash(h hash.Hash) error {
 	return nil
 }
 
+type DirContent string
+
+var _ Directory = DirContent("")
+
+func (d DirContent) Rel(prj *Project) string { return prj.relPath(d.Path()) }
+
+func (d DirContent) Path() string { return string(d) }
+
+func (d DirContent) Stat() (fs.FileInfo, error) { return os.Stat(d.Path()) }
+
+func (d DirContent) Exists() bool {
+	_, err := d.Stat()
+	return err == nil || !errors.Is(err, os.ErrNotExist)
+}
+
+func (d DirContent) List() ([]fs.DirEntry, error) { return os.ReadDir(string(d)) }
+
+func (d DirContent) Name(in *Project) string { return d.Rel(in) }
+
+func (d DirContent) StateAt() (t time.Time) {
+	err := filepath.WalkDir(d.Path(), func(_ string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir():
+			return nil
+		}
+		if dinfo, err := d.Info(); err != nil {
+			return err
+		} else if mt := dinfo.ModTime(); t.Before(mt) {
+			t = mt
+		}
+		return nil
+	})
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func (d DirContent) StateHash(h hash.Hash) error {
+	return filepath.WalkDir(d.Path(), func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir():
+			return nil
+		}
+		return File(path).StateHash(h)
+	})
+}
+
 type File string
 
-var _ HashableArtefact = File("")
+var _ FsArtefact = File("")
 
-func (f File) In(prj *Project) string { return prj.relPath(f.Path()) }
+func (f File) Rel(prj *Project) string { return prj.relPath(f.Path()) }
 
 func (f File) Path() string { return string(f) }
 
@@ -66,7 +133,7 @@ func (f File) Exists() bool {
 	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
 
-func (f File) Name(prj *Project) string { return f.In(prj) }
+func (f File) Name(prj *Project) string { return f.Rel(prj) }
 
 func (f File) StateAt() time.Time {
 	st, err := f.Stat()
@@ -90,7 +157,7 @@ func (f File) StateHash(h hash.Hash) error {
 }
 
 type FsCopy struct {
-	MkDirs bool
+	MkDirMode fs.FileMode
 }
 
 var (
@@ -103,7 +170,7 @@ func (cp FsCopy) BuildAction(prj *Project, premises, results []*Goal) (*Action, 
 		switch g.Artefact.(type) {
 		case File:
 			return true, nil
-		case Directory:
+		case DirList:
 			return false, nil
 		}
 		return false, fmt.Errorf("FS copy: illegal artefact type %T", g.Artefact)
@@ -136,23 +203,20 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) (err error) {
 			env.Log.Error(err.Error())
 		}
 	}()
-	var prems []string
+	var prems []FsArtefact
 	for _, pre := range a.Premises {
-		switch pre := pre.Artefact.(type) {
-		case File:
-			prems = append(prems, pre.In(a.Project()))
-		case Directory:
-			prems = append(prems, pre.In(a.Project()))
-		default:
+		if fsa, ok := pre.Artefact.(FsArtefact); ok {
+			prems = append(prems, fsa)
+		} else {
 			return fmt.Errorf("FS copy: illegal premise artefact type %T", pre)
 		}
 	}
 	for _, res := range a.Results {
 		switch res := res.Artefact.(type) {
 		case File:
-			return cp.toFile(res.In(a.Project()), prems, env)
+			return cp.toFile(a.Project(), res, prems, env)
 		case Directory:
-			return cp.toDir(res.In(a.Project()), prems, env)
+			return cp.toDir(a.Project(), res, prems, env)
 		default:
 			return fmt.Errorf("FS copy: illegal result artefact type %T", res)
 		}
@@ -160,29 +224,31 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) (err error) {
 	return nil
 }
 
-func (cp FsCopy) toFile(dst string, srcs []string, env *Env) error {
-	if cp.MkDirs {
-		os.MkdirAll(filepath.Dir(dst), 0777) // TODO Is umsak enough
+func (cp FsCopy) toFile(prj *Project, dst File, srcs []FsArtefact, env *Env) error {
+	dstPath := dst.Rel(prj)
+	if cp.MkDirMode != 0 {
+		os.MkdirAll(filepath.Dir(dstPath), cp.MkDirMode)
 	}
 	if len(srcs) == 1 {
 		src := srcs[0]
-		st, err := os.Stat(src)
+		st, err := src.Stat()
 		if err != nil {
 			return err
 		}
-		fsCopyFile(dst, src, st, env.Log)
+		fsCopyFile(dstPath, src.Rel(prj), st, env.Log)
 	}
-	w, err := os.Create(dst)
+	w, err := os.Create(dstPath)
 	if err != nil {
 		return err // TODO context
 	}
 	defer w.Close()
 	for _, src := range srcs {
+		srcPath := src.Rel(prj)
 		env.Log.Debug("FS copy: append `src` -> `dst`",
-			slog.String(`src`, src),
-			slog.String(`dst`, dst),
+			slog.String(`src`, srcPath),
+			slog.String(`dst`, dstPath),
 		)
-		r, err := os.Open(src)
+		r, err := os.Open(srcPath)
 		if err != nil {
 			return err // TODO context
 		}
@@ -197,22 +263,38 @@ func (cp FsCopy) toFile(dst string, srcs []string, env *Env) error {
 	return nil
 }
 
-func (cp FsCopy) toDir(dst string, srcs []string, env *Env) error {
-	if cp.MkDirs {
-		os.MkdirAll(dst, 0777) // TODO Is umsak enough
+func (cp FsCopy) toDir(prj *Project, dst Directory, srcs []FsArtefact, env *Env) error {
+	dstPath := dst.Rel(prj)
+	if cp.MkDirMode != 0 {
+		if err := os.MkdirAll(dstPath, cp.MkDirMode); err != nil {
+			return err
+		}
 	}
 	for _, src := range srcs {
-		st, err := os.Stat(src)
+		st, err := src.Stat()
 		if err != nil {
 			return err
 		}
 		if st.IsDir() {
-			if err = sfCopyDir(dst, src, env.Log); err != nil {
-				return err
+			srcPath := src.Rel(prj)
+			switch src := src.(type) {
+			case DirContent:
+				return sfCopyDir(dstPath, srcPath, env.Log)
+			case DirList:
+				srcBase := filepath.Base(srcPath)
+				dstPath = filepath.Join(srcBase)
+				if cp.MkDirMode != 0 {
+					if err := os.Mkdir(dstPath, cp.MkDirMode); err != nil {
+						return err
+					}
+				}
+				return sfCopyDir(dstPath, srcPath, env.Log)
+			default:
+				return fmt.Errorf("FS IsDir = true for %T", src)
 			}
 		} else {
-			bnm := filepath.Base(src)
-			err = fsCopyFile(filepath.Join(dst, bnm), src, st, env.Log)
+			bnm := filepath.Base(src.Path())
+			err = fsCopyFile(filepath.Join(dstPath, bnm), src.Rel(prj), st, env.Log)
 			if err != nil {
 				return err
 			}
@@ -275,19 +357,24 @@ func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
 	return err
 }
 
+func (cp FsCopy) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
+	// TODO FsCopy.WriteHash()
+	return errors.New("NYI: FsCopy.WriteHash()")
+}
+
 type FsConverter struct {
-	Ext       string
+	OutExt    string
 	Converter ActionBuilder
 }
 
 func (s FsConverter) ext() string {
-	if s.Ext == "" {
+	if s.OutExt == "" {
 		return ""
 	}
-	if s.Ext[0] != '.' {
-		return "." + s.Ext
+	if s.OutExt[0] != '.' {
+		return "." + s.OutExt
 	}
-	return s.Ext
+	return s.OutExt
 }
 
 func FsConvert(prj *Project, dir Directory, glob string, steps ...FsConverter) error {

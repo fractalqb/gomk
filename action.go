@@ -3,12 +3,13 @@ package gomk
 import (
 	"context"
 	"fmt"
+	"hash"
 )
 
-// An Action is something you can do in your [Project] to achive a [Goal]. The
-// actual implementation of the action is an [Operation]. An action without an
-// operation is an "implicit" action, i.e. if all its premises are true, all
-// results of the action are implicitly given.
+// An Action is something you can do in your [Project] to achieve at least one
+// [Goal]. The actual implementation of the action is an [Operation]. An action
+// without an operation is an "implicit" action, i.e. if all its premises are
+// true, all results of the action are implicitly given.
 type Action struct {
 	Premises []*Goal
 	Results  []*Goal
@@ -59,9 +60,17 @@ func (a *Action) String() string {
 	return a.Op.Describe(a.Project())
 }
 
+func (a *Action) WriteHash(h hash.Hash, env *Env) error {
+	if a.Op == nil {
+		return nil
+	}
+	return a.Op.WriteHash(h, a, env)
+}
+
 type Operation interface {
 	Describe(*Project) string
 	Do(context.Context, *Action, *Env) error
+	WriteHash(hash.Hash, *Action, *Env) error
 }
 
 type OperationFunc func(context.Context, *Action, *Env) error
@@ -99,4 +108,8 @@ func (bop badOp) Describe(prj *Project) string {
 
 func (bop badOp) Do(_ context.Context, a *Action, _ *Env) error {
 	return fmt.Errorf("called %s", bop.Describe(a.Project()))
+}
+
+func (bop badOp) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
+	return fmt.Errorf("hash %s", bop.Describe(a.Project()))
 }

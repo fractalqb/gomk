@@ -1,3 +1,4 @@
+// This is an example gomk project that offers you a practical approach.
 package main
 
 import (
@@ -24,6 +25,7 @@ var (
 
 	clean, dryrun bool
 	writeDot      bool
+	offline       bool
 )
 
 func flags() {
@@ -31,6 +33,7 @@ func flags() {
 	flag.BoolVar(&writeDot, "dot", writeDot, "Write graphviz file to stdout and exit")
 	flag.BoolVar(&clean, "clean", clean, "Clean project")
 	flag.BoolVar(&dryrun, "n", dryrun, "Dryrun")
+	flag.BoolVar(&offline, "offline", offline, "Skip everything that requires being online")
 	flag.Parse()
 	if *fLog != "" {
 		qblog.DefaultConfig.ParseFlag(*fLog)
@@ -40,16 +43,23 @@ func flags() {
 func main() {
 	flags()
 
-	prj := gomk.NewProject("")
+	builder := gomk.Builder{} //LogDir: "build", MkDirMode: 0777}
+	prj := gomk.NewProject("", &builder)
 
 	goalGoGen := prj.Goal(gomk.Abstract("go-gen")).
 		By(&goGenerate)
 
-	goalGovulnchk := prj.Goal(gomk.Abstract("vulncheck")).
-		By(&goVulnchk)
+	var goalGovulnchk, goalTest *gomk.Goal
+	if offline {
+		goalTest = prj.Goal(gomk.Abstract("test")).
+			By(&goTest, goalGoGen)
+	} else {
+		goalGovulnchk = prj.Goal(gomk.Abstract("vulncheck")).
+			By(&goVulnchk)
 
-	goalTest := prj.Goal(gomk.Abstract("test")).
-		By(&goTest, goalGoGen, goalGovulnchk)
+		goalTest = prj.Goal(gomk.Abstract("test")).
+			By(&goTest, goalGoGen, goalGovulnchk)
+	}
 
 	goalBuildFoo := prj.Goal(gomk.File("cmd/foo/foo")).
 		By(&goBuild, goalTest)
@@ -58,21 +68,21 @@ func main() {
 		By(&goBuild, goalTest)
 
 	// requires 'markdown' to be in the path
-	gomk.FsConvert(prj, "doc", "*/*.md", gomk.FsConverter{
-		Ext: ".html",
+	gomk.FsConvert(prj, gomk.DirContent("doc"), "doc/*.md", gomk.FsConverter{
+		OutExt: ".html",
 		Converter: &gomk.ConvertCmd{
 			Exe:    "markdown",
 			Output: "stdout",
 		},
 	})
 	// requires 'plantuml' to be in the path
-	gomk.FsConvert(prj, "doc", "*/*.puml", gomk.FsConverter{
-		Ext:       ".png",
+	gomk.FsConvert(prj, gomk.DirContent("doc"), "doc/*.puml", gomk.FsConverter{
+		OutExt:    ".png",
 		Converter: &gomk.ConvertCmd{Exe: "plantuml"},
 	})
 
-	prj.Goal(gomk.Directory("dist")).
-		By(gomk.FsCopy{MkDirs: true}, goalBuildFoo, goalBuildBar)
+	prj.Goal(gomk.DirList("dist")).
+		By(gomk.FsCopy{MkDirMode: 0777}, goalBuildFoo, goalBuildBar)
 
 	if writeDot {
 		if _, err := prj.WriteDot(os.Stdout); err != nil {
@@ -92,7 +102,6 @@ func main() {
 		return
 	}
 
-	var builder gomk.Builder
 	if flag.NArg() == 0 {
 		if err := builder.Project(prj); err != nil {
 			slog.Error(err.Error())

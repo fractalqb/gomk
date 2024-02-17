@@ -25,9 +25,8 @@ func Clean(prj *Project, dryrun bool, log *slog.Logger) error {
 					log.Warn(err.Error())
 				}
 			}
-		case Directory:
-
 		}
+		// TODO clean Directory???
 	}
 	return nil
 }

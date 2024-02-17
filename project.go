@@ -3,6 +3,7 @@ package gomk
 import (
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,21 +12,25 @@ import (
 	"time"
 )
 
+type HashFactory interface{ NewHash() hash.Hash }
+
 type Project struct {
 	Dir string
 
 	goals     map[string]*Goal
+	mkHash    HashFactory
 	buildLock sync.Mutex
 	lastBuild int64
 }
 
-func NewProject(dir string) *Project {
+func NewProject(dir string, h HashFactory) *Project {
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
 	prj := &Project{
-		Dir:   dir,
-		goals: make(map[string]*Goal),
+		Dir:    dir,
+		goals:  make(map[string]*Goal),
+		mkHash: h,
 	}
 	return prj
 }
@@ -43,7 +48,12 @@ func (prj *Project) Goal(atf Artefact) *Goal {
 		Artefact: atf,
 		prj:      prj,
 		stateAt:  atf.StateAt(),
-		// TODO stateHash – without builder… impossible
+	}
+	if ha, ok := atf.(HashableArtefact); ok && prj.mkHash != nil {
+		h := prj.mkHash.NewHash()
+		if ha.StateHash(h) == nil { // TODO OK? err => just no hash
+			g.stateHash = h.Sum(nil)
+		}
 	}
 	prj.goals[name] = g
 	return g
@@ -101,6 +111,7 @@ func (prj *Project) Roots() (rs []*Goal) {
 	return rs
 }
 
+// TODO Escape label strings
 func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
 	defer func() {
 		if p := recover(); p != nil {

@@ -13,15 +13,21 @@ type UpdateMode uint
 const (
 	// All actions must be run to reach the goal.
 	UpdAllActions UpdateMode = 0
+
 	// All actions with changed state must be run to reach the goal.
 	UpdSomeActions UpdateMode = 1
+
 	// Only one of the actions wit changed state has to be run to reach the
 	// goal.
 	UpdAnyAction UpdateMode = 2
+
 	// Only one action must have changed state. Then the goal is reached by
 	// running that action.
 	UpdOneAction UpdateMode = 3
 
+	// An unordered update mode allows actions of the current goal to be run in
+	// any order or even concurrently. Otherwise, the actions must be run one
+	// after the other in the specified order.
 	UpdUnordered UpdateMode = 4
 
 	updActions UpdateMode = 3
@@ -34,10 +40,13 @@ func (m UpdateMode) Ordered() bool       { return (m & UpdUnordered) == 0 }
 // associated with an [Artefact] – generally something tangible that is
 // considered available and up-to-date when the goal is achieved. A special case
 // is the [Abstract] artefact that simply provides a name for abstract goals.
-// Goals can be achieved through actions. The goal is then a result of each
-// [Action]. On the other hand, a goal can also be the premise for one or more
-// actions. Such dependent actions may not be carried out before the goal is
-// reached.
+// Abstract goals do not deliver tangible results.
+//
+// Goals can be achieved through actions ([Action]). A goal can be the result of
+// several actions at the same time. It then depends on the target's
+// [UpdateMode] whether and how the actions contribute to the target. On the
+// other hand, a goal can also be the premise for one or more actions. Such
+// dependent actions should not be carried out before the goal is reached.
 type Goal struct {
 	UpdateMode UpdateMode
 	ResultOf   []*Action // Actions that result in this goal.
@@ -102,8 +111,12 @@ func (g *Goal) String() string {
 	return fmt.Sprintf("[%s]%s", an, tn)
 }
 
+// Artefact represents the tangible outcome of a [Goal] being reached. A special
+// case is the [Abstract] artefact.
 type Artefact interface {
+	// Name returns the name of the artefact that must be unique in the Project.
 	Name(in *Project) string
+
 	// StateAs returns the time at which the artefact reached its current state.
 	// If this cannot be provided, the zero Time is returned.
 	StateAt() time.Time

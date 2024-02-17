@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"os"
@@ -72,6 +73,11 @@ func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
 		)
 	}
 	return err
+}
+
+func (op *CmdOp) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
+	// TODO CmdOp.WriteHash()
+	return errors.New("NYI: CmdOp.WriteHash()")
 }
 
 type PipeOp []CmdOp
@@ -144,6 +150,11 @@ func (po PipeOp) Do(ctx context.Context, a *Action, env *Env) error {
 type piperw struct {
 	r *io.PipeReader
 	w *io.PipeWriter
+}
+
+func (po PipeOp) WriteHash(_ hash.Hash, a *Action, _ *Env) error {
+	// TODO PipeOp.WriteHash()
+	return errors.New("NYI: PipeOp.WriteHash()")
 }
 
 type ConvertCmd struct {
