@@ -1,9 +1,10 @@
-package gomk
+package gomkore
 
 import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 )
 
@@ -16,7 +17,7 @@ const (
 	// All actions with changed state must be run to reach the goal.
 	UpdSomeActions UpdateMode = 1
 
-	// Only one of the actions wit changed state has to be run to reach the
+	// Only one of the actions with changed state has to be run to reach the
 	// goal.
 	UpdAnyAction UpdateMode = 2
 
@@ -52,22 +53,11 @@ type Goal struct {
 	PremiseOf  []*Action // Dependent actions of this goal.
 	Artefact   Artefact
 
+	sync.Mutex
+
 	prj       *Project
-	lastBuild int64
-}
-
-func (g *Goal) By(a ActionBuilder, premises ...*Goal) *Goal {
-	_, err := a.BuildAction(g.Project(), premises, []*Goal{g})
-	if err != nil {
-		g.Project().NewAction(premises, []*Goal{g}, badOp{err: err})
-		return g
-	}
-	return g
-}
-
-func (g *Goal) ImpliedBy(premises ...*Goal) *Goal {
-	g.Project().NewAction(premises, []*Goal{g}, nil)
-	return g
+	lastBuid  BuildID
+	buildInfo any // TODO is it necessary?
 }
 
 func (g *Goal) Project() *Project { return g.prj }
@@ -79,27 +69,31 @@ func (g *Goal) IsAbstract() bool {
 	return ok
 }
 
-// Valid checks all premise and result actions of g using [Action.Valid] and
-// returns g along with all collected errors, if any.
-func (g *Goal) Valid() (*Goal, error) {
-	var errs []error
-	for _, a := range g.ResultOf {
-		if err := a.Valid(); err != nil {
-			errs = append(errs, err)
+// TODO Use when editing projects; UpdateConsistency is pessimistic
+func (g *Goal) UpdateConsistency(involved *Goal) error {
+	if len(g.ResultOf) <= 1 && len(involved.ResultOf) <= 1 {
+		return nil // Even if involved is not really involved => no conflict
+	}
+	if !involved.UpdateMode.Ordered() {
+		switch involved.UpdateMode.Actions() {
+		case UpdAllActions:
+			// TODO Assert g ordered & same list of actions
+		case UpdSomeActions:
+			return nil
+		case UpdAnyAction, UpdOneAction:
+			// TODO Assert g hase exactly 1 same action
 		}
+		panic("unreachable code")
 	}
-	for _, a := range g.PremiseOf {
-		if err := a.Valid(); err != nil {
-			errs = append(errs, err)
+	if !g.UpdateMode.Ordered() {
+		if len(g.ResultOf) == 1 { // (v.s.) => len(involved.ResultOf) > 1
+			switch involved.UpdateMode.Actions() {
+
+			}
 		}
+		return errors.New("unordered involves ordered")
 	}
-	switch len(errs) {
-	case 0:
-		return g, nil
-	case 1:
-		return g, errs[1]
-	}
-	return g, errors.Join(errs...)
+	return errors.New("NYI: Goal.UpdateConsistency()")
 }
 
 func (g *Goal) String() string {
@@ -107,6 +101,20 @@ func (g *Goal) String() string {
 	an := g.Name()
 	return fmt.Sprintf("[%s]%s", an, tn)
 }
+
+func (g *Goal) LockBuild(info func() any) (BuildID, any) {
+	g.Lock()
+	if plb := g.Project().lastBuild; g.lastBuid < plb {
+		g.lastBuid = plb
+		g.buildInfo = info()
+		return plb, g.buildInfo
+	}
+	g.Unlock()
+	return 0, nil
+}
+
+// BuildInfo must only be called by the goroutine that holds the lock.
+func (g *Goal) BuildInfo() any { return g.buildInfo }
 
 // Artefact represents the tangible outcome of a [Goal] being reached. A special
 // case is the [Abstract] artefact.
@@ -116,7 +124,7 @@ type Artefact interface {
 
 	// StateAs returns the time at which the artefact reached its current state.
 	// If this cannot be provided, the zero Time is returned.
-	StateAt() time.Time
+	StateAt(in *Project) time.Time
 }
 
 type Abstract string
@@ -125,4 +133,4 @@ var _ Artefact = Abstract("")
 
 func (a Abstract) Name(*Project) string { return string(a) }
 
-func (a Abstract) StateAt() time.Time { return time.Time{} }
+func (a Abstract) StateAt(*Project) time.Time { return time.Time{} }

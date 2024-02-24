@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"git.fractalqb.de/fractalqb/gomk/gomkore"
 )
 
 type CmdOp struct {
@@ -21,12 +23,12 @@ type CmdOp struct {
 	Desc            string
 }
 
-var _ Operation = (*CmdOp)(nil)
+var _ gomkore.Operation = (*CmdOp)(nil)
 
-func (op *CmdOp) Describe(prj *Project) string {
+func (op *CmdOp) Describe(a *Action, _ *Env) string {
 	if op.Desc == "" {
-		path := prj.relPath(op.CWD)
-		return fmt.Sprintf("%s$%s%v", path, op.Exe, op.Args)
+		path := filepath.Base(op.Exe)
+		op.Desc = fmt.Sprintf("%s$%s%v", path, op.Exe, op.Args)
 	}
 	return op.Desc
 }
@@ -89,17 +91,17 @@ func (op *CmdOp) WriteHash(h hash.Hash, a *Action, _ *Env) (bool, error) {
 
 type PipeOp []CmdOp
 
-var _ Operation = PipeOp{}
+var _ gomkore.Operation = PipeOp{}
 
-func (po PipeOp) Describe(prj *Project) string {
+func (po PipeOp) Describe(a *Action, env *Env) string {
 	if len(po) == 0 {
 		return "empty pipe"
 	}
 	var sb strings.Builder
-	sb.WriteString(po[0].Describe(prj))
+	sb.WriteString(po[0].Describe(a, env))
 	for _, o := range po[1:] {
 		sb.WriteByte('|')
-		sb.WriteString(o.Describe(prj))
+		sb.WriteString(o.Describe(a, env))
 	}
 	return sb.String()
 }
@@ -181,18 +183,24 @@ type ConvertCmd struct {
 	Args   []string
 }
 
-func (cc *ConvertCmd) BuildAction(prj *Project, premises, results []*Goal) (*Action, error) {
-	if len(premises) != 1 || len(results) != 1 {
-		return nil, errors.New("ConvertCmd requires one premise and one result file goal")
+var _ gomkore.Operation = (*ConvertCmd)(nil)
+
+func (cc *ConvertCmd) Describe(*Action, *Env) string {
+	return fmt.Sprintf("%s-Convert", filepath.Base(cc.Exe))
+}
+
+func (cc *ConvertCmd) Do(ctx context.Context, a *Action, env *Env) error {
+	if len(a.Premises) != 1 || len(a.Results) != 1 {
+		return errors.New("ConvertCmd requires one premise and one result file goal")
 	}
-	pre, res := premises[0], results[0]
+	pre, res := a.Premises[0], a.Results[0]
 	inFile, ok := pre.Artefact.(File)
 	if !ok {
-		return nil, fmt.Errorf("ConvertCmd expect one premise file, have one %T", pre.Artefact)
+		return fmt.Errorf("ConvertCmd expect one premise file, have one %T", pre.Artefact)
 	}
 	outFile, ok := res.Artefact.(File)
 	if !ok {
-		return nil, fmt.Errorf("ConvertCmd expect one reslut file, have one %T", res.Artefact)
+		return fmt.Errorf("ConvertCmd expect one reslut file, have one %T", res.Artefact)
 	}
 	op := &CmdOp{
 		CWD:  filepath.Dir(inFile.Path()),
@@ -215,5 +223,9 @@ func (cc *ConvertCmd) BuildAction(prj *Project, premises, results []*Goal) (*Act
 	} else if cc.Output == "stdout" {
 		op.OutFile = outFile.Path()
 	}
-	return prj.NewAction(premises, results, op), nil
+	return op.Do(ctx, a, env)
+}
+
+func (cc *ConvertCmd) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+	return false, errors.New("NYI: ConvertCmd.WriteHash()")
 }

@@ -1,4 +1,4 @@
-package gomk
+package gomkore
 
 import (
 	"fmt"

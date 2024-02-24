@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"git.fractalqb.de/fractalqb/eloc/must"
 	"git.fractalqb.de/fractalqb/gomk"
 	"git.fractalqb.de/fractalqb/qblog"
 )
@@ -16,9 +17,6 @@ var (
 
 	// go test ./...
 	goTest = gomk.GoTest{Pkgs: []string{"./..."}}
-
-	// govulncheck ./...
-	goVulnchk = gomk.GoVulncheck{Patterns: []string{"./..."}}
 
 	// go build -C <result-dir> -trimpath -s -w
 	goBuild = gomk.GoBuild{TrimPath: true}
@@ -45,43 +43,40 @@ func main() {
 
 	prj := gomk.NewProject("")
 
-	goalGoGen := prj.Goal(gomk.Abstract("go-gen")).
-		By(&goGenerate)
+	must.Do(gomk.Edit(prj, func(prj gomk.ProjectEd) error {
+		goalGoGen := prj.Goal(gomk.Abstract("go-gen")).
+			By(&goGenerate)
 
-	var goalGovulnchk, goalTest *gomk.Goal
-	if offline {
-		goalTest = prj.Goal(gomk.Abstract("test")).
+		goalTest := prj.Goal(gomk.Abstract("test")).
 			By(&goTest, goalGoGen)
-	} else {
-		goalGovulnchk = prj.Goal(gomk.Abstract("vulncheck")).
-			By(&goVulnchk)
 
-		goalTest = prj.Goal(gomk.Abstract("test")).
-			By(&goTest, goalGoGen, goalGovulnchk)
-	}
+		goalBuildFoo := prj.Goal(gomk.File("cmd/foo/foo")).
+			By(&goBuild, goalTest)
 
-	goalBuildFoo := prj.Goal(gomk.File("cmd/foo/foo")).
-		By(&goBuild, goalTest)
+		goalBuildBar := prj.Goal(gomk.File("cmd/bar/bar")).
+			By(&goBuild, goalTest)
 
-	goalBuildBar := prj.Goal(gomk.File("cmd/bar/bar")).
-		By(&goBuild, goalTest)
+		mdGoals := must.Ret(gomk.FsGoals(prj, gomk.DirList{Dir: "doc", Glob: "*.md"}, nil))
+		goals := gomk.Convert(mdGoals,
+			gomk.FileExt(".html").Convert,
+			// requires 'markdown' to be in the path
+			&gomk.ConvertCmd{Exe: "markdown", Output: "stdout"},
+		)
+		goalDoc := prj.Goal(gomk.Abstract("doc")).ImpliedBy(goals...)
 
-	// requires 'markdown' to be in the path
-	gomk.FsConvert(prj, gomk.DirContent("doc"), "doc/*.md", gomk.FsConverter{
-		OutExt: ".html",
-		Converter: &gomk.ConvertCmd{
-			Exe:    "markdown",
-			Output: "stdout",
-		},
-	})
-	// requires 'plantuml' to be in the path
-	gomk.FsConvert(prj, gomk.DirContent("doc"), "doc/*.puml", gomk.FsConverter{
-		OutExt:    ".png",
-		Converter: &gomk.ConvertCmd{Exe: "plantuml"},
-	})
+		pumlGoals := must.Ret(gomk.FsGoals(prj, gomk.DirList{Dir: "doc", Glob: "*.puml"}, nil))
+		goals = gomk.Convert(pumlGoals,
+			gomk.FileExt(".png").Convert,
+			// requires 'plantuml' to be in the path
+			&gomk.ConvertCmd{Exe: "plantuml"},
+		)
+		goalDoc.ImpliedBy(goals...)
 
-	prj.Goal(gomk.DirList("dist")).
-		By(gomk.FsCopy{MkDirMode: 0777}, goalBuildFoo, goalBuildBar)
+		prj.Goal(gomk.DirList{Dir: "dist"}).
+			By(gomk.FsCopy{MkDirMode: 0777}, goalBuildFoo, goalBuildBar)
+
+		return nil
+	}))
 
 	if writeDot {
 		if _, err := prj.WriteDot(os.Stdout); err != nil {

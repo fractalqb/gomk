@@ -1,12 +1,16 @@
 package gomk
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"hash"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"git.fractalqb.de/fractalqb/gomk/gomkore"
 )
 
 type GoTool struct {
@@ -20,6 +24,17 @@ func (t *GoTool) goExe() (string, error) {
 	return exec.LookPath("go")
 }
 
+func (t *GoTool) describe(base string, a *Action) string {
+	if a == nil || len(a.Results) == 0 {
+		return "Go " + base
+	}
+	s := fmt.Sprintf("Go %s %s", base, a.Results[0].Name())
+	if len(a.Results) > 1 {
+		s += "…"
+	}
+	return s
+}
+
 // GoBuild is an [ActionBuilder] that expects exactly one result [Goal] with
 // either a [File] or [Directory] artefact. The created action will run 'go
 // build' with -C to change into the result's deirectory.
@@ -31,35 +46,40 @@ type GoBuild struct {
 	SetVars  []string // See https://pkg.go.dev/cmd/link Flag: -X
 }
 
-var _ ActionBuilder = (*GoBuild)(nil)
+var _ gomkore.Operation = (*GoBuild)(nil)
 
-func (gb *GoBuild) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+func (gb *GoBuild) Describe(a *Action, _ *Env) string {
+	return gb.describe("build", a)
+}
+
+func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
 	var err error
-	if len(rs) != 1 {
+	if len(a.Results) != 1 {
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "go build with %d results:", len(rs))
-		for _, r := range rs {
+		fmt.Fprintf(&sb, "go build with %d results:", len(a.Results))
+		for _, r := range a.Results {
 			fmt.Fprintf(&sb, " %s", r)
 		}
-		return nil, errors.New(sb.String())
+		return errors.New(sb.String())
 	}
 	var chdir string
-	switch rs := rs[0].Artefact.(type) {
+	switch rs := a.Results[0].Artefact.(type) {
 	case DirList:
 		chdir = rs.Path()
 	case File:
 		chdir = filepath.Dir(rs.Path())
 	default:
-		return nil, fmt.Errorf("illegal type %T of go build result", rs)
+		return fmt.Errorf("illegal type %T of go build result", rs)
 	}
+	prj := a.Project()
 	if st, err := os.Stat(filepath.Join(prj.Dir, chdir)); err != nil {
-		return nil, fmt.Errorf("path '%s' error: %w", chdir, err)
+		return fmt.Errorf("path '%s' error: %w", chdir, err)
 	} else if !st.IsDir() {
-		return nil, fmt.Errorf("path '%s' is not a directory", chdir)
+		return fmt.Errorf("path '%s' is not a directory", chdir)
 	}
 	goTool, err := gb.goExe()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	op := &CmdOp{
 		CWD:  prj.Dir,
@@ -91,7 +111,11 @@ func (gb *GoBuild) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	if ldFlags.Len() > 0 {
 		op.Args = append(op.Args, "-ldflags", ldFlags.String())
 	}
-	return prj.NewAction(ps, rs, op), nil
+	return op.Do(ctx, a, env)
+}
+
+func (*GoBuild) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+	return false, errors.New("NYI: GoBuild.WriteHash()")
 }
 
 type GoTest struct {
@@ -100,14 +124,19 @@ type GoTest struct {
 	Pkgs []string
 }
 
-var _ ActionBuilder = (*GoTest)(nil)
+var _ gomkore.Operation = (*GoTest)(nil)
 
-func (gt *GoTest) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+func (gt *GoTest) Describe(a *Action, _ *Env) string {
+	return gt.describe("test", a)
+}
+
+func (gt *GoTest) Do(ctx context.Context, a *Action, env *Env) error {
 	var err error
 	goTool, err := gt.goExe()
 	if err != nil {
-		return nil, err
+		return err
 	}
+	prj := a.Project()
 	op := &CmdOp{
 		CWD:  prj.Dir,
 		Exe:  goTool,
@@ -117,7 +146,11 @@ func (gt *GoTest) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	if len(gt.Pkgs) > 0 {
 		op.Args = append(op.Args, gt.Pkgs...)
 	}
-	return prj.NewAction(ps, rs, op), nil
+	return op.Do(ctx, a, env)
+}
+
+func (*GoTest) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+	return false, errors.New("NYI: GoTest.WriteHash()")
 }
 
 type GoGenerate struct {
@@ -128,14 +161,19 @@ type GoGenerate struct {
 	Skip      string
 }
 
-var _ ActionBuilder = (*GoGenerate)(nil)
+var _ gomkore.Operation = (*GoGenerate)(nil)
 
-func (gg *GoGenerate) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+func (gg *GoGenerate) Describe(a *Action, _ *Env) string {
+	return gg.describe("generate", a)
+}
+
+func (gg *GoGenerate) Do(ctx context.Context, a *Action, env *Env) error {
 	var err error
 	goTool, err := gg.goExe()
 	if err != nil {
-		return nil, err
+		return err
 	}
+	prj := a.Project()
 	op := &CmdOp{
 		CWD:  prj.Dir,
 		Exe:  goTool,
@@ -154,7 +192,11 @@ func (gg *GoGenerate) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error)
 	if len(gg.FilesPkgs) > 0 {
 		op.Args = append(op.Args, gg.FilesPkgs...)
 	}
-	return prj.NewAction(ps, rs, op), nil
+	return op.Do(ctx, a, env)
+}
+
+func (*GoGenerate) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+	return false, errors.New("NYI: GoGenerate.WriteHash()")
 }
 
 type GoRun struct {
@@ -165,17 +207,22 @@ type GoRun struct {
 	Args []string
 }
 
-var _ ActionBuilder = (*GoRun)(nil)
+var _ gomkore.Operation = (*GoRun)(nil)
 
-func (gr *GoRun) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
+func (gr *GoRun) Describe(a *Action, _ *Env) string {
+	return gr.describe("run", a)
+}
+
+func (gr *GoRun) Do(ctx context.Context, a *Action, env *Env) error {
 	var err error
 	if gr.Pkg == "" {
-		return nil, errors.New("go run without package")
+		return errors.New("go run without package")
 	}
 	goTool, err := gr.goExe()
 	if err != nil {
-		return nil, err
+		return err
 	}
+	prj := a.Project()
 	op := &CmdOp{
 		CWD:  prj.Dir,
 		Exe:  goTool,
@@ -190,42 +237,9 @@ func (gr *GoRun) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
 	}
 	op.Args = append(op.Args, gr.Pkg)
 	op.Args = append(op.Args, gr.Args...)
-	return prj.NewAction(ps, rs, op), nil
+	return op.Do(ctx, a, env)
 }
 
-type GoVulncheck struct {
-	Version  string
-	CWD      string
-	Tags     []string
-	Patterns []string
-}
-
-var _ ActionBuilder = (*GoVulncheck)(nil)
-
-func (gvc *GoVulncheck) BuildAction(prj *Project, ps, rs []*Goal) (*Action, error) {
-	const govulncheck = "golang.org/x/vuln/cmd/govulncheck"
-	var err error
-	goTool, err := (&GoTool{}).goExe()
-	if err != nil {
-		return nil, err
-	}
-	op := &CmdOp{
-		CWD:  prj.Dir,
-		Exe:  goTool,
-		Args: []string{"run"},
-		Desc: "govulncheck",
-	}
-	if len(gvc.Patterns) > 0 {
-		op.Desc = fmt.Sprintf("%s %s", op.Desc, strings.Join(gvc.Patterns, " "))
-	}
-	if len(gvc.Tags) > 0 {
-		op.Args = append(op.Args, "-tags", strings.Join(gvc.Tags, ","))
-	}
-	if gvc.Version == "" {
-		op.Args = append(op.Args, govulncheck+"@latest")
-	} else {
-		op.Args = append(op.Args, govulncheck+"@"+gvc.Version)
-	}
-	op.Args = append(op.Args, gvc.Patterns...)
-	return prj.NewAction(ps, rs, op), nil
+func (*GoRun) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+	return false, errors.New("NYI: GoRun.WriteHash()")
 }

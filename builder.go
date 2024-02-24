@@ -10,8 +10,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"time"
 
+	"git.fractalqb.de/fractalqb/gomk/gomkore"
 	"git.fractalqb.de/fractalqb/qblog"
 )
 
@@ -21,7 +24,7 @@ type Builder struct {
 	LogDir    string
 	MkDirMode fs.FileMode
 
-	bid int64
+	idSeq gomkore.BuildID
 }
 
 // Project builds all leafs in prj.
@@ -32,10 +35,8 @@ func (bd *Builder) Project(prj *Project) error {
 // ProjectContext builds all leafs in prj.
 func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
 	start := time.Now()
-	prj.buildLock.Lock()
-	defer prj.buildLock.Unlock()
-
-	bd.bid = prj.buildID()
+	bid := prj.LockBuild()
+	defer prj.Unlock()
 	if bd.Env == nil {
 		bd.Env = DefaultEnv()
 	}
@@ -44,15 +45,23 @@ func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
 		return err
 	}
 	defer func() { bd.restoreEnv(oldEnv) }()
-	bd.Env.Log = bd.Env.Log.With("project", prj.String(), "build", bd.bid)
-	bd.Env.Log.Info("`build` `project` in `dir`", `dir`, prj.Dir)
+	tr := startTrace(bid)
+	bd.Env.Log.Info("`build` `project` in `dir`",
+		`build`, fmt.Sprintf("@%d", bid),
+		`project`, prj.String(),
+		`dir`, prj.Dir,
+	)
 	leafs := prj.Leafs()
 	for _, leaf := range leafs {
-		if err := bd.buildGoal(ctx, leaf); err != nil {
+		if err := bd.buildGoal(ctx, leaf, tr); err != nil {
 			return err
 		}
 	}
-	bd.Env.Log.Info("`build` of `project` `took`", `took`, time.Since(start))
+	bd.Env.Log.Info("`build` of `project` `took`",
+		`build`, fmt.Sprintf("@%d", bid),
+		`project`, prj.String(),
+		`took`, time.Since(start),
+	)
 	return nil
 }
 
@@ -68,23 +77,22 @@ func (bd *Builder) GoalsContext(ctx context.Context, gs ...*Goal) error {
 	var prj *Project
 	defer func() {
 		if prj != nil {
-			prj.buildLock.Unlock()
+			prj.Unlock()
 		}
 	}()
 	if bd.Env == nil {
 		bd.Env = DefaultEnv()
 	}
 	bd.Env.Log = bd.Env.Log.With("project", prj.String())
+	var tr *trace
 	for _, g := range gs {
 		if p := g.Project(); p != prj {
-			if prj != nil {
-				prj.buildLock.Unlock()
-			}
+			prj.Unlock()
+			bid := p.LockBuild()
+			tr = startTrace(bid)
 			prj = p
-			prj.buildLock.Lock()
 		}
-		bd.bid = prj.buildID()
-		if err := bd.buildGoal(ctx, g); err != nil {
+		if err := bd.buildGoal(ctx, g, tr); err != nil {
 			return err
 		}
 	}
@@ -107,22 +115,31 @@ func (bd *Builder) NamedGoalsContext(ctx context.Context, prj *Project, names ..
 	return bd.GoalsContext(ctx, gs...)
 }
 
-func (bd *Builder) buildGoal(ctx context.Context, g *Goal) error {
-	if g.lastBuild >= bd.bid {
+func (bd *Builder) nextID() any { return atomic.AddUint64(&bd.idSeq, 1) }
+
+func (bd *Builder) buildGoal(ctx context.Context, g *Goal, tr *trace) error {
+	if bid, gid := g.LockBuild(bd.nextID); bid == 0 {
 		return nil
+	} else {
+		tr = tr.push(gid.(gomkore.BuildID))
 	}
-	g.lastBuild = bd.bid
-	bd.Env.Log.Info("`build` `goal` in `project`", `goal`, g.String())
+	defer g.Unlock()
+	bd.Env.Log.Info("`goal`", `goal`, g.String(), `trace`, tr)
 	if len(g.ResultOf) == 0 {
 		return nil
 	}
 	for _, act := range g.ResultOf {
 		for _, pre := range act.Premises {
-			if err := bd.buildGoal(ctx, pre); err != nil {
+			if err := bd.buildGoal(ctx, pre, tr); err != nil {
 				return err
 			}
 		}
 	}
+
+	log := bd.Env.Log
+	bd.Env.Log = log.With("trace", tr.String())
+	defer func() { bd.Env.Log = log }()
+
 	chgs := bd.checkPreTimes(g)
 	if len(chgs) == 0 {
 		bd.Env.Log.Debug("`goal` already up-to-date", `goal`, g.String())
@@ -186,7 +203,7 @@ func (bd *Builder) updateOne(ctx context.Context, g *Goal, chgs []int) error {
 }
 
 func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
-	gaTS := g.Artefact.StateAt()
+	gaTS := g.Artefact.StateAt(g.Project())
 	for actIdx, act := range g.ResultOf {
 		if gaTS.IsZero() {
 			chgs = append(chgs, actIdx)
@@ -194,7 +211,7 @@ func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
 		}
 	PREMISE_LOOP:
 		for _, pre := range act.Premises {
-			preTS := pre.Artefact.StateAt()
+			preTS := pre.Artefact.StateAt(g.Project())
 			switch {
 			case preTS.IsZero():
 				chgs = append(chgs, actIdx)
@@ -230,7 +247,7 @@ func (bd *Builder) prepLogDir() (restore *Env, err error) {
 	if bd.LogDir == "" {
 		return bd.Env, nil
 	}
-	bdir := fmt.Sprintf("%s.%d", time.Now().Format("060102-150405"), bd.bid)
+	bdir := fmt.Sprintf("%s", time.Now().Format("060102-150405")) // TODO collisions?
 	bdir = filepath.Join(bd.LogDir, bdir)
 	if bd.MkDirMode != 0 {
 		if err = os.MkdirAll(bdir, bd.MkDirMode); err != nil {
@@ -280,4 +297,28 @@ func (w stackedWriter) Close() error {
 		return c.Close()
 	}
 	return nil
+}
+
+type trace struct {
+	p  *trace
+	id gomkore.BuildID
+}
+
+func startTrace(id gomkore.BuildID) *trace { return &trace{id: id} }
+
+func (t *trace) push(id gomkore.BuildID) *trace { return &trace{p: t, id: id} }
+
+func (t *trace) pop() *trace { return t.p }
+
+// must t != nil
+func (t *trace) String() string {
+	var sb strings.Builder
+	if t.p != nil {
+		fmt.Fprint(&sb, t.id)
+		for t = t.p; t.p != nil; t = t.p {
+			fmt.Fprintf(&sb, ">%d", t.id)
+		}
+	}
+	fmt.Fprintf(&sb, "@%d", t.id)
+	return sb.String()
 }

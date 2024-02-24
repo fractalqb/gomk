@@ -1,6 +1,8 @@
-package gomk
+package gomkore
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestEnv_SetTags(t *testing.T) {
 	var e Env
