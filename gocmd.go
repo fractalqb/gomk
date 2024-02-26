@@ -25,11 +25,11 @@ func (t *GoTool) goExe() (string, error) {
 }
 
 func (t *GoTool) describe(base string, a *Action) string {
-	if a == nil || len(a.Results) == 0 {
+	if a == nil || len(a.Results()) == 0 {
 		return "Go " + base
 	}
-	s := fmt.Sprintf("Go %s %s", base, a.Results[0].Name())
-	if len(a.Results) > 1 {
+	s := fmt.Sprintf("Go %s %s", base, a.Result(0).Name())
+	if len(a.Results()) > 1 {
 		s += "…"
 	}
 	return s
@@ -54,16 +54,16 @@ func (gb *GoBuild) Describe(a *Action, _ *Env) string {
 
 func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
 	var err error
-	if len(a.Results) != 1 {
+	if len(a.Results()) != 1 {
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "go build with %d results:", len(a.Results))
-		for _, r := range a.Results {
+		fmt.Fprintf(&sb, "go build with %d results:", len(a.Results()))
+		for _, r := range a.Results() {
 			fmt.Fprintf(&sb, " %s", r)
 		}
 		return errors.New(sb.String())
 	}
 	var chdir string
-	switch rs := a.Results[0].Artefact.(type) {
+	switch rs := a.Result(0).Artefact.(type) {
 	case DirList:
 		chdir = rs.Path()
 	case File:

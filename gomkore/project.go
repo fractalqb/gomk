@@ -21,10 +21,13 @@ type Project struct {
 
 	parent    *Project
 	goals     map[string]*Goal
+	actions   []*Action
 	lastBuild BuildID
 }
 
 var _ Artefact = (*Project)(nil)
+
+// TODO _ Operation = (*Project)(nil) to support nested projects??? => ~Builder?
 
 func NewProject(dir string) *Project {
 	if dir == "" {
@@ -113,7 +116,7 @@ func (prj *Project) StateAt(in *Project) time.Time {
 	return t
 }
 
-func (prj *Project) RelPath(s string) string {
+func (prj *Project) RelPath(p string) string {
 	dir := prj.Dir
 	if prj.parent != nil {
 		dir = prj.parent.RelPath(dir)
@@ -123,12 +126,12 @@ func (prj *Project) RelPath(s string) string {
 		err error
 	)
 	if dir == "" {
-		tmp, err = filepath.Rel(".", s)
+		tmp, err = filepath.Rel(".", p)
 	} else {
-		tmp, err = filepath.Rel(dir, s)
+		tmp, err = filepath.Rel(dir, p)
 	}
 	if err != nil {
-		return filepath.Clean(s)
+		return filepath.Clean(p)
 	}
 	return tmp
 }
@@ -162,9 +165,12 @@ func (prj *Project) NewAction(premises, results []*Goal, op Operation) (*Action,
 	if err := prj.consistentPrj(premises, results); err != nil {
 		return nil, err
 	}
+	if err := updateConsistency(results); err != nil {
+		return nil, err
+	}
 	a := &Action{
-		Premises: premises,
-		Results:  results,
+		premises: premises,
+		results:  results,
 		Op:       op,
 		prj:      prj,
 	}
@@ -174,6 +180,7 @@ func (prj *Project) NewAction(premises, results []*Goal, op Operation) (*Action,
 	for _, r := range results {
 		r.ResultOf = append(r.ResultOf, a)
 	}
+	prj.actions = append(prj.actions, a)
 	return a, nil
 }
 
@@ -204,7 +211,7 @@ func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
 			panic(err)
 		}
 	}
-	akku(fmt.Fprintf(w, "digraph \"%s\" {\n", escDotID(prj.Name(nil))))
+	akku(fmt.Fprintf(w, "digraph \"%s\" {\n\trankdir=\"LR\"\n", escDotID(prj.Name(nil))))
 	for n, g := range prj.goals {
 		tn := reflect.Indirect(reflect.ValueOf(g.Artefact)).Type().Name()
 		var updMode string
@@ -235,16 +242,22 @@ func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
 				escDotID(n),
 			))
 		}
-		for _, a := range g.ResultOf {
+		for i, a := range g.ResultOf {
 			if a.Op == nil {
 				akku(fmt.Fprintf(w, "\t\"%p\" [shape=none,label=\"implicit\"];\n", a))
 			} else {
 				akku(fmt.Fprintf(w, "\t\"%p\" [shape=box,style=rounded,label=\"%s\"];\n", a, escDotID(a.String())))
 			}
-			akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", a, g))
-			for _, p := range a.Premises {
-				akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", p, a))
+			var lb string
+			if g.UpdateMode.Ordered() {
+				lb = fmt.Sprintf(" [label=%d]", i+1)
 			}
+			akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\"%s;\n", a, g, lb))
+		}
+	}
+	for _, act := range prj.actions {
+		for _, p := range act.premises {
+			akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", p, act))
 		}
 	}
 	akku(fmt.Fprintln(w, "}"))

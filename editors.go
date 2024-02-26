@@ -13,6 +13,8 @@ func (ed ProjectEd) NewAction(premises, results []GoalEd, op gomkore.Operation) 
 	return ActionEd{a}
 }
 
+func (ed ProjectEd) Dir() string { return ed.p.Dir }
+
 func (ed ProjectEd) Goal(atf gomkore.Artefact) GoalEd {
 	g, err := ed.p.Goal(atf)
 	if err != nil {
@@ -21,12 +23,16 @@ func (ed ProjectEd) Goal(atf gomkore.Artefact) GoalEd {
 	return GoalEd{g}
 }
 
+func (ed ProjectEd) RelPath(p string) string { return ed.p.RelPath(p) }
+
 type GoalEd struct{ g *Goal }
 
 func (ed GoalEd) Project() ProjectEd { return ProjectEd{ed.g.Project()} }
 
 func (ed GoalEd) UpdateMode() gomkore.UpdateMode     { return ed.g.UpdateMode }
 func (ed GoalEd) SetUpdateMode(m gomkore.UpdateMode) { ed.g.UpdateMode = m }
+
+func (ed GoalEd) Artefact() gomkore.Artefact { return ed.g.Artefact }
 
 func (ed GoalEd) IsAbstract() bool { return ed.g.IsAbstract() }
 
@@ -63,4 +69,8 @@ type ActionEd struct{ a *gomkore.Action }
 
 func (ed ActionEd) Project() ProjectEd {
 	return ProjectEd{ed.a.Project()}
+}
+
+func (ed ActionEd) SetIgnoreError(ignore bool) {
+	ed.a.IgnoreError = ignore
 }

@@ -129,7 +129,7 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal, tr *trace) error {
 		return nil
 	}
 	for _, act := range g.ResultOf {
-		for _, pre := range act.Premises {
+		for _, pre := range act.Premises() {
 			if err := bd.buildGoal(ctx, pre, tr); err != nil {
 				return err
 			}
@@ -210,7 +210,7 @@ func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
 			continue
 		}
 	PREMISE_LOOP:
-		for _, pre := range act.Premises {
+		for _, pre := range act.Premises() {
 			preTS := pre.Artefact.StateAt(g.Project())
 			switch {
 			case preTS.IsZero():

@@ -204,7 +204,7 @@ func (d DirContent) ok(p string, e fs.DirEntry, sel DirListSelect) (bool, error)
 	if d.Glob == "" {
 		return true, nil
 	}
-	return filepath.Match(d.Glob, p)
+	return filepath.Match(d.Glob, filepath.Base(p))
 }
 
 type File string
@@ -275,14 +275,14 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) (err error) {
 		}
 	}()
 	var prems []FsArtefact
-	for _, pre := range a.Premises {
+	for _, pre := range a.Premises() {
 		if fsa, ok := pre.Artefact.(FsArtefact); ok {
 			prems = append(prems, fsa)
 		} else {
 			return fmt.Errorf("FS copy: illegal premise artefact type %T", pre)
 		}
 	}
-	for _, res := range a.Results {
+	for _, res := range a.Results() {
 		switch res := res.Artefact.(type) {
 		case File:
 			return cp.toFile(a.Project(), res, prems, env)
@@ -429,10 +429,10 @@ func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
 }
 
 func (cp FsCopy) WriteHash(h hash.Hash, a *Action, _ *Env) (bool, error) {
-	for _, pre := range a.Premises {
+	for _, pre := range a.Premises() {
 		fmt.Fprintln(h, pre.Name())
 	}
-	for _, res := range a.Results {
+	for _, res := range a.Results() {
 		fmt.Fprintln(h, res.Name())
 	}
 	return true, nil

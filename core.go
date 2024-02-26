@@ -20,7 +20,7 @@ func DefaultEnv() *Env { return gomkore.DefaultEnv() }
 
 func NewProject(dir string) *Project { return gomkore.NewProject(dir) }
 
-func Edit(prj *Project, do func(ProjectEd) error) (err error) {
+func Edit(prj *Project, do func(ProjectEd)) (err error) {
 	prj.Lock()
 	defer func() {
 		prj.Unlock()
@@ -35,8 +35,8 @@ func Edit(prj *Project, do func(ProjectEd) error) (err error) {
 			}
 		}
 	}()
-	err = do(ProjectEd{prj})
-	return err
+	do(ProjectEd{prj})
+	return
 }
 
 const (

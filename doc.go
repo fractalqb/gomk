@@ -62,5 +62,5 @@
 // builds.
 //
 // [plugins]: https://golang.google.cn/pkg/plugin/
-// [gomk-lib]: https://codeberg.org/fractalqb/gomk-lib
+// [gomk-lib]: https://pkg.go.dev/codeberg.org/fractalqb/gomklib
 package gomk

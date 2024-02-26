@@ -43,7 +43,7 @@ func main() {
 
 	prj := gomk.NewProject("")
 
-	must.Do(gomk.Edit(prj, func(prj gomk.ProjectEd) error {
+	must.Do(gomk.Edit(prj, func(prj gomk.ProjectEd) {
 		goalGoGen := prj.Goal(gomk.Abstract("go-gen")).
 			By(&goGenerate)
 
@@ -63,6 +63,7 @@ func main() {
 			&gomk.ConvertCmd{Exe: "markdown", Output: "stdout"},
 		)
 		goalDoc := prj.Goal(gomk.Abstract("doc")).ImpliedBy(goals...)
+		goalDoc.SetUpdateMode(gomk.UpdAllActions | gomk.UpdUnordered)
 
 		pumlGoals := must.Ret(gomk.FsGoals(prj, gomk.DirList{Dir: "doc", Glob: "*.puml"}, nil))
 		goals = gomk.Convert(pumlGoals,
@@ -74,23 +75,21 @@ func main() {
 
 		prj.Goal(gomk.DirList{Dir: "dist"}).
 			By(gomk.FsCopy{MkDirMode: 0777}, goalBuildFoo, goalBuildBar)
-
-		return nil
 	}))
-
-	if writeDot {
-		if _, err := prj.WriteDot(os.Stdout); err != nil {
-			slog.Error(err.Error())
-			os.Exit(1)
-		}
-		return
-	}
 
 	if clean {
 		log := qblog.New(&qblog.DefaultConfig)
 		err := gomk.Clean(prj, dryrun, log.Logger)
 		if err != nil {
 			log.Error(err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+
+	if writeDot {
+		if _, err := prj.WriteDot(os.Stdout); err != nil {
+			slog.Error(err.Error())
 			os.Exit(1)
 		}
 		return
