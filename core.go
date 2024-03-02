@@ -20,6 +20,9 @@ func DefaultEnv() *Env { return gomkore.DefaultEnv() }
 
 func NewProject(dir string) *Project { return gomkore.NewProject(dir) }
 
+// Edit calls do with wrappers of [gomkore] types that allow easy editing of
+// project definitions. Edit recovers from any panic and returns it as an error,
+// so the idiomatic error handling within do can be skipped.
 func Edit(prj *Project, do func(ProjectEd)) (err error) {
 	prj.Lock()
 	defer func() {

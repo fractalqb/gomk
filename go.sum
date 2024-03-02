@@ -6,5 +6,7 @@ git.fractalqb.de/fractalqb/qblog v0.14.5 h1:WFRDx90jB8qF423uv1TvxlzOXGKTcVokLY4T
 git.fractalqb.de/fractalqb/qblog v0.14.5/go.mod h1:SmILpdHE1N1fMrRZ3s4O8WORke5JRuvhxeRJ41gBuDs=
 git.fractalqb.de/fractalqb/sllm/v3 v3.0.0 h1:B9BlqGxyjIsVwfjFFRPf3Ikddwb2Roy7bmTf+9nmG9k=
 git.fractalqb.de/fractalqb/sllm/v3 v3.0.0/go.mod h1:edz8wv/8tc6LGR8GNNLndhnwmhMN/v/tUxo6vrZFbaM=
+github.com/bits-and-blooms/bitset v1.13.0 h1:bAQ9OPNFYbGHV6Nez0tmNI0RiEu7/hxlYJRUA0wFAVE=
+github.com/bits-and-blooms/bitset v1.13.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/fractalqb/texst v0.8.0 h1:r+2Vlj2rys0VNFgQVVp/rCFqO+Hc0HCj8b6pK1DLP04=
 github.com/fractalqb/texst v0.8.0/go.mod h1:1I3XAXaa6C7b8ueo/QIQFXjyhj8oOJA2vNoNHOl08h4=

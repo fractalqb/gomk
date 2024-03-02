@@ -2,6 +2,7 @@ package gomk
 
 import "git.fractalqb.de/fractalqb/gomk/gomkore"
 
+// ProjectEd is used with [Edit].
 type ProjectEd struct{ p *Project }
 
 func (ed ProjectEd) NewAction(premises, results []GoalEd, op gomkore.Operation) ActionEd {
@@ -25,6 +26,7 @@ func (ed ProjectEd) Goal(atf gomkore.Artefact) GoalEd {
 
 func (ed ProjectEd) RelPath(p string) string { return ed.p.RelPath(p) }
 
+// GoalEd is used with [Edit].
 type GoalEd struct{ g *Goal }
 
 func (ed GoalEd) Project() ProjectEd { return ProjectEd{ed.g.Project()} }
@@ -65,6 +67,7 @@ func goals(gs []GoalEd) []*Goal {
 	return gls
 }
 
+// ActionEd is used with [Edit].
 type ActionEd struct{ a *gomkore.Action }
 
 func (ed ActionEd) Project() ProjectEd {

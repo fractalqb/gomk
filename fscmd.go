@@ -19,9 +19,18 @@ import (
 type FsArtefact interface {
 	gomkore.Artefact
 	Path() string
-	Rel(*Project) string
-	Stat(*Project) (fs.FileInfo, error)
-	Exists(*Project) bool
+	Rel(in ProjectEd) string
+	Stat(in ProjectEd) (fs.FileInfo, error)
+	Exists(in ProjectEd) bool
+}
+
+func FsStat(a FsArtefact, in *Project) (fs.FileInfo, error) {
+	return os.Stat(in.RelPath(a.Path()))
+}
+
+func FsExists(a FsArtefact, in *Project) bool {
+	_, err := FsStat(a, in)
+	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
 
 type DirListSelect int
@@ -46,11 +55,21 @@ func (sel DirListSelect) ok(e fs.DirEntry) bool {
 
 type Directory interface {
 	FsArtefact
-	List(in *Project) ([]string, error)
+	List(in ProjectEd) ([]string, error)
+}
+
+func FsList(d Directory, in *Project) (ls []string, err error) {
+	switch d := d.(type) {
+	case DirList:
+		return FsDirList(d, in)
+	case DirContent:
+		return FsDirContent(d, in)
+	}
+	return nil, fmt.Errorf("unsupported directory type %T", d)
 }
 
 func FsGoals(prj ProjectEd, dir, dirTmpl Directory) (goals []GoalEd, err error) {
-	ls, err := dir.List(prj.p)
+	ls, err := dir.List(prj)
 	if err != nil {
 		return nil, err
 	}
@@ -93,19 +112,17 @@ type DirList struct {
 
 var _ Directory = DirList{}
 
-func (d DirList) Rel(in *Project) string { return in.RelPath(d.Path()) }
+func (d DirList) Rel(in ProjectEd) string                { return in.RelPath(d.Path()) }
+func (d DirList) Path() string                           { return d.Dir }
+func (d DirList) Stat(in ProjectEd) (fs.FileInfo, error) { return FsStat(d, in.p) }
+func (d DirList) Exists(in ProjectEd) bool               { return FsExists(d, in.p) }
 
-func (d DirList) Path() string { return d.Dir }
-
-func (d DirList) Stat(in *Project) (fs.FileInfo, error) { return os.Stat(d.Rel(in)) }
-
-func (d DirList) Exists(in *Project) bool {
-	_, err := d.Stat(in)
-	return err == nil || !errors.Is(err, os.ErrNotExist)
+func (d DirList) List(in ProjectEd) (ls []string, err error) {
+	return FsDirList(d, in.p)
 }
 
-func (d DirList) List(in *Project) (ls []string, err error) {
-	prjDir := d.Rel(in)
+func FsDirList(d DirList, in *Project) (ls []string, err error) {
+	prjDir := in.RelPath(d.Dir)
 	rdir, err := os.ReadDir(prjDir)
 	if err != nil {
 		return nil, err
@@ -128,10 +145,10 @@ func (d DirList) List(in *Project) (ls []string, err error) {
 	return ls, nil
 }
 
-func (d DirList) Name(prj *Project) string { return d.Rel(prj) }
+func (d DirList) Name(prj *Project) string { return prj.RelPath(d.Dir) }
 
 func (d DirList) StateAt(in *Project) time.Time {
-	st, err := d.Stat(in)
+	st, err := os.Stat(in.RelPath(d.Dir))
 	if err != nil || !st.IsDir() {
 		return time.Time{}
 	}
@@ -146,19 +163,18 @@ type DirContent struct {
 
 var _ Directory = DirContent{}
 
-func (d DirContent) Rel(prj *Project) string { return prj.RelPath(d.Path()) }
+func (d DirContent) Rel(prj ProjectEd) string               { return prj.RelPath(d.Path()) }
+func (d DirContent) Path() string                           { return d.Dir }
+func (d DirContent) Stat(in ProjectEd) (fs.FileInfo, error) { return FsStat(d, in.p) }
+func (d DirContent) Exists(in ProjectEd) bool               { return FsExists(d, in.p) }
 
-func (d DirContent) Path() string { return d.Dir }
-
-func (d DirContent) Stat(in *Project) (fs.FileInfo, error) { return os.Stat(d.Rel(in)) }
-
-func (d DirContent) Exists(in *Project) bool {
-	_, err := d.Stat(in)
-	return err == nil || !errors.Is(err, os.ErrNotExist)
+func (d DirContent) List(in ProjectEd) (ls []string, err error) {
+	return FsDirContent(d, in.p)
 }
 
-func (d DirContent) List(in *Project) (ls []string, err error) {
-	err = filepath.WalkDir(d.Rel(in), func(path string, e fs.DirEntry, err error) error {
+func FsDirContent(d DirContent, in *Project) (ls []string, err error) {
+	root := in.RelPath(d.Path())
+	err = filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -172,10 +188,11 @@ func (d DirContent) List(in *Project) (ls []string, err error) {
 	return
 }
 
-func (d DirContent) Name(in *Project) string { return d.Rel(in) }
+func (d DirContent) Name(in *Project) string { return in.RelPath(d.Dir) }
 
 func (d DirContent) StateAt(in *Project) (t time.Time) {
-	err := filepath.WalkDir(d.Rel(in), func(p string, e fs.DirEntry, err error) error {
+	root := in.RelPath(d.Dir)
+	err := filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -211,21 +228,15 @@ type File string
 
 var _ FsArtefact = File("")
 
-func (f File) Rel(prj *Project) string { return prj.RelPath(f.Path()) }
+func (f File) Rel(prj ProjectEd) string               { return prj.RelPath(f.Path()) }
+func (f File) Path() string                           { return string(f) }
+func (f File) Stat(in ProjectEd) (fs.FileInfo, error) { return FsStat(f, in.p) }
+func (f File) Exists(in ProjectEd) bool               { return FsExists(f, in.p) }
 
-func (f File) Path() string { return string(f) }
-
-func (f File) Stat(in *Project) (fs.FileInfo, error) { return os.Stat(f.Rel(in)) }
-
-func (f File) Exists(in *Project) bool {
-	_, err := f.Stat(in)
-	return err == nil || !errors.Is(err, os.ErrNotExist)
-}
-
-func (f File) Name(prj *Project) string { return f.Rel(prj) }
+func (f File) Name(in *Project) string { return in.RelPath(f.Path()) }
 
 func (f File) StateAt(in *Project) time.Time {
-	st, err := f.Stat(in)
+	st, err := os.Stat(in.RelPath(f.Path()))
 	if err != nil || st.IsDir() {
 		return time.Time{}
 	}
@@ -296,17 +307,17 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) (err error) {
 }
 
 func (cp FsCopy) toFile(prj *Project, dst File, srcs []FsArtefact, env *Env) error {
-	dstPath := dst.Rel(prj)
+	dstPath := prj.RelPath(dst.Path())
 	if cp.MkDirMode != 0 {
 		os.MkdirAll(filepath.Dir(dstPath), cp.MkDirMode)
 	}
 	if len(srcs) == 1 {
-		src := srcs[0]
-		st, err := src.Stat(prj)
+		src := prj.RelPath(srcs[0].Path())
+		st, err := os.Stat(src)
 		if err != nil {
 			return err
 		}
-		fsCopyFile(dstPath, src.Rel(prj), st, env.Log)
+		fsCopyFile(dstPath, src, st, env.Log)
 	}
 	w, err := os.Create(dstPath)
 	if err != nil {
@@ -314,7 +325,7 @@ func (cp FsCopy) toFile(prj *Project, dst File, srcs []FsArtefact, env *Env) err
 	}
 	defer w.Close()
 	for _, src := range srcs {
-		srcPath := src.Rel(prj)
+		srcPath := prj.RelPath(src.Path())
 		env.Log.Debug("FS copy: append `src` -> `dst`",
 			slog.String(`src`, srcPath),
 			slog.String(`dst`, dstPath),
@@ -335,19 +346,19 @@ func (cp FsCopy) toFile(prj *Project, dst File, srcs []FsArtefact, env *Env) err
 }
 
 func (cp FsCopy) toDir(prj *Project, dst Directory, srcs []FsArtefact, env *Env) error {
-	dstPath := dst.Rel(prj)
+	dstPath := prj.RelPath(dst.Path())
 	if cp.MkDirMode != 0 {
 		if err := os.MkdirAll(dstPath, cp.MkDirMode); err != nil {
 			return err
 		}
 	}
 	for _, src := range srcs {
-		st, err := src.Stat(prj)
+		srcPath := prj.RelPath(src.Path())
+		st, err := os.Stat(srcPath)
 		if err != nil {
 			return err
 		}
 		if st.IsDir() {
-			srcPath := src.Rel(prj)
 			switch src := src.(type) {
 			case DirContent:
 				return sfCopyDir(dstPath, srcPath, env.Log)
@@ -365,7 +376,7 @@ func (cp FsCopy) toDir(prj *Project, dst Directory, srcs []FsArtefact, env *Env)
 			}
 		} else {
 			bnm := filepath.Base(src.Path())
-			err = fsCopyFile(filepath.Join(dstPath, bnm), src.Rel(prj), st, env.Log)
+			err = fsCopyFile(filepath.Join(dstPath, bnm), srcPath, st, env.Log)
 			if err != nil {
 				return err
 			}
