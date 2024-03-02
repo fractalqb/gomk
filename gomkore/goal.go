@@ -2,9 +2,12 @@ package gomkore
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/bits-and-blooms/bitset"
 )
 
 type UpdateMode uint
@@ -55,7 +58,7 @@ type Goal struct {
 	sync.Mutex
 
 	prj       *Project
-	lastBuid  BuildID
+	lastBID   BuildID
 	buildInfo any // TODO is it necessary?
 }
 
@@ -135,19 +138,63 @@ func (g *Goal) String() string {
 	return fmt.Sprintf("[%s]%s", an, tn)
 }
 
-func (g *Goal) LockBuild(info func() any) (BuildID, any) {
-	g.Lock()
-	if plb := g.Project().lastBuild; g.lastBuid < plb {
-		g.lastBuid = plb
-		g.buildInfo = info()
-		return plb, g.buildInfo
+// LockBuild locks g once for the current build of g's project. If g was already
+// locked for the build (0, nil) is returend. If g can be locked an info is not
+// nil g's build info will be set to info()
+func (g *Goal) LockBuild(info func() any) BuildID {
+	g.Mutex.Lock()
+	if plb := g.Project().lastBuild; g.lastBID < plb {
+		g.lastBID = plb
+		if info == nil {
+			g.buildInfo = nil
+		} else {
+			g.buildInfo = info()
+		}
+		return plb
 	}
-	g.Unlock()
-	return 0, nil
+	g.Mutex.Unlock()
+	return 0
 }
 
 // BuildInfo must only be called by the goroutine that holds the lock.
 func (g *Goal) BuildInfo() any { return g.buildInfo }
+
+func (g *Goal) LockPreActions(gid BuildID) {
+	todo := len(g.ResultOf)
+	locked := bitset.New(uint(todo))
+
+	var (
+		i  uint = math.MaxUint
+		ok bool
+	)
+	for todo > 0 {
+		if i, ok = locked.NextClear(i + 1); !ok { // TODO ??? i+1 >= size
+			i, ok = locked.NextClear(0)
+			if !ok {
+				panic("no next to lock but todo > 0")
+			}
+		}
+		blockGID := g.ResultOf[i].tryLock(gid)
+		if blockGID > gid { // I lost => restart
+			for j, ok := locked.NextSet(0); ok; j, ok = locked.NextSet(j + 1) {
+				g.ResultOf[j].unlock()
+			}
+			locked.ClearAll()
+			todo = len(g.ResultOf)
+			// Sleep for short to not support the winner
+			time.Sleep(time.Millisecond) // TODO reasonable?
+		} else {
+			locked.Set(i)
+			todo--
+		}
+	}
+}
+
+func (g *Goal) UnlockPreActions() {
+	for _, act := range g.ResultOf {
+		act.unlock()
+	}
+}
 
 // Artefact represents the tangible outcome of a [Goal] being reached. A special
 // case is the [Abstract] artefact.

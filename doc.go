@@ -58,9 +58,6 @@
 //
 //	TODO: gomkore vs. simple API through [gomk.Edit]
 //
-// Nevertheless, gomk is not a comprehensive library for all types of project
-// builds.
-//
 // [plugins]: https://golang.google.cn/pkg/plugin/
 // [gomk-lib]: https://pkg.go.dev/codeberg.org/fractalqb/gomklib
 package gomk

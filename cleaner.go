@@ -15,7 +15,7 @@ func Clean(prj *Project, dryrun bool, log *slog.Logger) error {
 		}
 		switch a := g.Artefact.(type) {
 		case File:
-			if !a.Exists(prj) {
+			if !FsExists(a, prj) {
 				continue
 			}
 			log.Info("remove `artefact`", `artefact`, g.String())

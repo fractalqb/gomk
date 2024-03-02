@@ -36,6 +36,10 @@ func DefaultEnv() *Env {
 	}
 	for _, evar := range os.Environ() {
 		kv := strings.SplitN(evar, "=", 2)
+		if len(kv) == 0 || kv[0] == "" {
+			env.Log.Warn("ignoring default `env`", `env`, evar)
+			continue
+		}
 		switch len(kv) {
 		case 1:
 			env.tags[kv[0]] = ""
@@ -149,9 +153,12 @@ func (e *Env) ExecEnv() ([]string, error) {
 	if e.xenv == nil {
 		var errKeys []string
 		for k, v := range e.mergedTags() {
-			if k == "" || strings.ContainsRune(k, '=') {
+			switch {
+			case k == "":
+				errKeys = append(errKeys, `""`)
+			case strings.ContainsRune(k, '='):
 				errKeys = append(errKeys, k)
-			} else {
+			default:
 				tmp := fmt.Sprintf("%s=%s", k, v)
 				e.xenv = append(e.xenv, tmp)
 			}

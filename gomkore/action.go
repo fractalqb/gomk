@@ -3,6 +3,7 @@ package gomkore
 import (
 	"context"
 	"hash"
+	"sync/atomic"
 )
 
 // An Action is something you can do in your [Project] to achieve at least one
@@ -15,7 +16,9 @@ type Action struct {
 	premises    []*Goal
 	results     []*Goal
 
-	prj *Project
+	prj     *Project
+	lockGID BuildID
+	lastBID BuildID
 }
 
 func (a *Action) Project() *Project   { return a.prj }
@@ -24,14 +27,22 @@ func (a *Action) Premise(i int) *Goal { return a.premises[i] }
 func (a *Action) Results() []*Goal    { return a.results }
 func (a *Action) Result(i int) *Goal  { return a.results[i] }
 
-func (a *Action) Run(env *Env) error {
-	return a.RunContext(context.Background(), env)
+func (a *Action) LastBuild() BuildID { return a.lastBID }
+
+// Must not run concurrently, see [Goal.LockPreActions] and [tryLock]
+func (a *Action) Run(bid BuildID, env *Env) (BuildID, error) {
+	return a.RunContext(context.Background(), bid, env)
 }
 
-func (a *Action) RunContext(ctx context.Context, env *Env) error {
+// Must not run concurrently, see [Goal.LockPreActions] and [tryLock]
+func (a *Action) RunContext(ctx context.Context, bid BuildID, env *Env) (BuildID, error) {
+	if bid <= a.lastBID {
+		return a.lastBID, nil
+	}
 	env.Log.Debug("run `action`", `action`, a.String())
+	a.lastBID = bid
 	if a.Op == nil {
-		return nil
+		return 0, nil
 	}
 	if env == nil {
 		env = DefaultEnv()
@@ -39,15 +50,15 @@ func (a *Action) RunContext(ctx context.Context, env *Env) error {
 	err := a.Op.Do(ctx, a, env)
 	switch {
 	case err == nil:
-		return nil
+		return 0, nil
 	case a.IgnoreError:
 		env.Log.Warn("ignoring `action` `error`",
 			`action`, a.String(),
 			`error`, err,
 		)
-		return nil
+		return 0, nil
 	}
-	return err
+	return 0, err
 }
 
 func (a *Action) String() string {
@@ -66,6 +77,15 @@ func (a *Action) WriteHash(h hash.Hash, env *Env) (bool, error) {
 	}
 	return a.Op.WriteHash(h, a, env)
 }
+
+func (a *Action) tryLock(byGID BuildID) (blockingGID BuildID) {
+	if atomic.CompareAndSwapUint64(&a.lockGID, 0, byGID) {
+		return 0
+	}
+	return atomic.LoadUint64(&a.lockGID)
+}
+
+func (a *Action) unlock() { atomic.StoreUint64(&a.lockGID, 0) }
 
 type Operation interface {
 	// The hints are optional

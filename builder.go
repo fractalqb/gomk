@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,7 +25,7 @@ type Builder struct {
 	LogDir    string
 	MkDirMode fs.FileMode
 
-	idSeq gomkore.BuildID
+	gidSeq gomkore.BuildID // generate goal ID for a build
 }
 
 // Project builds all leafs in prj.
@@ -40,7 +41,7 @@ func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
 	if bd.Env == nil {
 		bd.Env = DefaultEnv()
 	}
-	oldEnv, err := bd.prepLogDir()
+	oldEnv, err := bd.prepLogDir(bid)
 	if err != nil {
 		return err
 	}
@@ -52,6 +53,7 @@ func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
 		`dir`, prj.Dir,
 	)
 	leafs := prj.Leafs()
+	bd.gidSeq = 0
 	for _, leaf := range leafs {
 		if err := bd.buildGoal(ctx, leaf, tr); err != nil {
 			return err
@@ -85,6 +87,7 @@ func (bd *Builder) GoalsContext(ctx context.Context, gs ...*Goal) error {
 	}
 	bd.Env.Log = bd.Env.Log.With("project", prj.String())
 	var tr *trace
+	bd.gidSeq = 0
 	for _, g := range gs {
 		if p := g.Project(); p != prj {
 			prj.Unlock()
@@ -115,16 +118,17 @@ func (bd *Builder) NamedGoalsContext(ctx context.Context, prj *Project, names ..
 	return bd.GoalsContext(ctx, gs...)
 }
 
-func (bd *Builder) nextID() any { return atomic.AddUint64(&bd.idSeq, 1) }
+func (bd *Builder) nextGoalID() any { return atomic.AddUint64(&bd.gidSeq, 1) }
 
 func (bd *Builder) buildGoal(ctx context.Context, g *Goal, tr *trace) error {
-	if bid, gid := g.LockBuild(bd.nextID); bid == 0 {
+	bid := g.LockBuild(bd.nextGoalID)
+	if bid == 0 {
 		return nil
-	} else {
-		tr = tr.push(gid.(gomkore.BuildID))
 	}
+	gid := g.BuildInfo().(gomkore.BuildID) // my goal ID
+	tr = tr.push(gid)
 	defer g.Unlock()
-	bd.Env.Log.Info("`goal`", `goal`, g.String(), `trace`, tr)
+	bd.Env.Log.Info("check `goal`", `goal`, g.String(), `trace`, tr)
 	if len(g.ResultOf) == 0 {
 		return nil
 	}
@@ -136,72 +140,169 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal, tr *trace) error {
 		}
 	}
 
+	chgs := bd.checkPreTimes(g)
+	if len(chgs) == 0 {
+		bd.Env.Log.Info("`goal` already up-to-date",
+			`goal`, g.String(),
+			`trace`, tr,
+		)
+		return nil
+	}
+	bd.Env.Log.Info("`goal` `requres` actions",
+		`goal`, g.String(),
+		`requres`, len(chgs),
+		`trace`, tr,
+	)
+
+	g.LockPreActions(gid)
+	defer g.UnlockPreActions()
+
 	log := bd.Env.Log
 	bd.Env.Log = log.With("trace", tr.String())
 	defer func() { bd.Env.Log = log }()
 
-	chgs := bd.checkPreTimes(g)
-	if len(chgs) == 0 {
-		bd.Env.Log.Debug("`goal` already up-to-date", `goal`, g.String())
-		return nil
-	}
 	var err error
 	switch g.UpdateMode.Actions() {
 	case UpdAllActions:
-		err = bd.updateAll(ctx, g, chgs)
+		err = bd.updateAll(ctx, bid, g, chgs)
 	case UpdSomeActions:
-		err = bd.updateSome(ctx, g, chgs)
+		err = bd.updateSome(ctx, bid, g, chgs)
 	case UpdAnyAction:
-		err = bd.updateAny(ctx, g, chgs)
+		err = bd.updateAny(ctx, bid, g, chgs)
 	case UpdOneAction:
-		err = bd.updateOne(ctx, g, chgs)
+		if l := len(chgs); l > 1 {
+			err = fmt.Errorf("%d change actions for update mode One in goal %s",
+				l,
+				g.String(),
+			)
+		} else {
+			err = bd.updateOne(ctx, bid, g, chgs[0])
+		}
 	default:
 		err = fmt.Errorf("illegal update mode actions: %d", g.UpdateMode.Actions())
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
-func (bd *Builder) updateAll(ctx context.Context, g *Goal, chgs []int) error {
-	for _, a := range g.ResultOf {
-		if err := a.RunContext(ctx, bd.Env); err != nil {
-			return err
+func (bd *Builder) updateAll(ctx context.Context, bid gomkore.BuildID, g *Goal, _ []int) error {
+	if g.UpdateMode.Ordered() {
+		for _, act := range g.ResultOf {
+			if preBID, err := act.RunContext(ctx, bid, bd.Env); err != nil {
+				return err
+			} else if preBID == bid {
+				return fmt.Errorf("action %s potentially ran out of order", act)
+			} else if preBID > bid {
+				return fmt.Errorf("action %s already run by younger build %d",
+					act,
+					preBID,
+				)
+			}
+		}
+	} else {
+		for _, act := range g.ResultOf {
+			if preBID, err := act.RunContext(ctx, bid, bd.Env); err != nil {
+				return err
+			} else if preBID > bid {
+				return fmt.Errorf("action %s already run by younger build %d",
+					act,
+					preBID,
+				)
+			}
 		}
 	}
 	return nil
 }
 
-func (bd *Builder) updateSome(ctx context.Context, g *Goal, chgs []int) error {
-	for _, idx := range chgs {
-		if err := g.ResultOf[idx].RunContext(ctx, bd.Env); err != nil {
-			return err
+func (bd *Builder) updateSome(ctx context.Context, bid gomkore.BuildID, g *Goal, chgs []int) error {
+	if len(chgs) > 1 && g.UpdateMode.Ordered() {
+		for _, idx := range chgs {
+			act := g.ResultOf[idx]
+			if preBID, err := act.RunContext(ctx, bid, bd.Env); err != nil {
+				return err
+			} else if preBID == bid {
+				return fmt.Errorf("action %s potentially ran out of order", act)
+			} else if preBID > bid {
+				return fmt.Errorf("action %s already run by younger build %d",
+					act,
+					preBID,
+				)
+			}
+		}
+	} else {
+		for _, idx := range chgs {
+			act := g.ResultOf[idx]
+			if preBID, err := act.RunContext(ctx, bid, bd.Env); err != nil {
+				return err
+			} else if preBID > bid {
+				return fmt.Errorf("action %s already run by younger build %d",
+					act,
+					preBID,
+				)
+			}
 		}
 	}
 	return nil
 
 }
 
-func (bd *Builder) updateAny(ctx context.Context, g *Goal, chgs []int) error {
-	if len(chgs) > 0 {
-		err := g.ResultOf[chgs[0]].RunContext(ctx, bd.Env)
-		return err
+func (bd *Builder) updateAny(ctx context.Context, bid gomkore.BuildID, g *Goal, chgs []int) error {
+	done := -1
+	for i, act := range g.ResultOf {
+		preBID := act.LastBuild()
+		switch {
+		case preBID > bid:
+			return fmt.Errorf("action %s already run by younger build %d",
+				act.String(),
+				preBID,
+			)
+		case preBID == bid:
+			if slices.Index(chgs, i) < 0 {
+				return fmt.Errorf(
+					"goal %s with update mode Any involved by inconsistent action",
+					g.String(),
+				)
+			} else if done < 0 {
+				done = i
+			} else {
+				return fmt.Errorf(
+					"goal %s with update mode Any already ran more than one action",
+					g.String(),
+				)
+			}
+		}
 	}
-	return nil
-}
-
-func (bd *Builder) updateOne(ctx context.Context, g *Goal, chgs []int) error {
-	switch len(chgs) {
-	case 0:
+	if done >= 0 {
 		return nil
-	case 1:
-		err := g.ResultOf[chgs[0]].RunContext(ctx, bd.Env)
-		return err
 	}
-	return fmt.Errorf("%d update actions for goal %s", len(chgs), g.Name())
+	_, err := g.ResultOf[chgs[0]].RunContext(ctx, bid, bd.Env)
+	return err
 }
 
+func (bd *Builder) updateOne(ctx context.Context, bid gomkore.BuildID, g *Goal, chg int) error {
+	for i, act := range g.ResultOf {
+		preBID := act.LastBuild()
+		switch {
+		case preBID > bid:
+			return fmt.Errorf("action %s already run by younger build %d",
+				act.String(),
+				preBID,
+			)
+		case preBID == bid:
+			if i == chg {
+				return nil
+			} else {
+				return fmt.Errorf(
+					"goal %s with update mode Any involved by inconsistent action",
+					g.String(),
+				)
+			}
+		}
+	}
+	_, err := g.ResultOf[chg].RunContext(ctx, bid, bd.Env)
+	return err
+}
+
+// TODO Consistency for concurrent builds
 func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
 	gaTS := g.Artefact.StateAt(g.Project())
 	for actIdx, act := range g.ResultOf {
@@ -243,11 +344,11 @@ func (bd *Builder) restoreEnv(old *Env) {
 	bd.Env = old
 }
 
-func (bd *Builder) prepLogDir() (restore *Env, err error) {
+func (bd *Builder) prepLogDir(bid gomkore.BuildID) (restore *Env, err error) {
 	if bd.LogDir == "" {
 		return bd.Env, nil
 	}
-	bdir := fmt.Sprintf("%s", time.Now().Format("060102-150405")) // TODO collisions?
+	bdir := fmt.Sprintf("%s.%d", time.Now().Format("060102-150405"), bid)
 	bdir = filepath.Join(bd.LogDir, bdir)
 	if bd.MkDirMode != 0 {
 		if err = os.MkdirAll(bdir, bd.MkDirMode); err != nil {
@@ -308,7 +409,7 @@ func startTrace(id gomkore.BuildID) *trace { return &trace{id: id} }
 
 func (t *trace) push(id gomkore.BuildID) *trace { return &trace{p: t, id: id} }
 
-func (t *trace) pop() *trace { return t.p }
+// func (t *trace) pop() *trace { return t.p }
 
 // must t != nil
 func (t *trace) String() string {
