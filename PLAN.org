@@ -1,0 +1,32 @@
+#+TITLE: Plans for gomk
+
+/Having plans in this files makes the repo more independent from
+hosters./
+
+* TODO Nested Projects
+
+* TODO Concurrent Builds
+
+* Refactoring [1/3]
+
+** DONE Operations must not complain about abstract premises [2/2]
+   CLOSED: [2024-03-03 So 22:28]
+
+Abstract premises can be a nice tool control the building process. To
+allow this, an operation must not error if it finds an apbstract
+prmeise that it cannot handle. (E.g. file copy cannot copy abstract
+goals, so skip them)
+
+- [X] [[file:exec.go::192][ConvertCmd.Do]]
+- [X] [[file:fscmd.go::295][FsCopy.Do]]
+- GoBuild.Do (completely ignores premises)
+- GoTest (completely ignores premises)
+- GoGenerate (completely ignores premises)
+- GoRun (completely ignores premises)
+  
+** TODO Move Dot files from gomkore to gomk
+
+** TODO Move builder into core [0/1]
+1. [ ]  Should this really be done?
+
+* Archived Plans                                                    :ARCHIVE:

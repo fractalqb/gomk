@@ -84,52 +84,14 @@ func (g *Goal) UpdateConsistency(involved *Goal) error {
 			return nil
 		}
 	}
+	// TODO This has to be carefully aligned with the builder:
+	// ~ A goal that has been partially build as "involved" only calls missing
+	// actions
+	// For the time being be cnservative:
 	return fmt.Errorf("update conflict of goal %s with involved goal %s",
 		g,
 		involved,
 	)
-	// TODO This has to be carefully aligned with the builder:
-	// ~ A goal that has been partially build as "involved" only calls missing
-	// actions
-	//
-	// switch len(g.ResultOf) {
-	// case 0:
-	// 	return nil
-	// case 1:
-	// 	if len(involved.ResultOf) <= 1 {
-	// 		return nil // Even if involved is not really involved => no conflict
-	// 	}
-	// 	switch involved.UpdateMode.Actions() {
-	// 	case UpdAllActions, UpdSomeActions:
-	// 		// If g's action is 1st (ordred?) of involved => could be done
-	// 		return fmt.Errorf("involved goal %s partially updated by %s",
-	// 			involved,
-	// 			g,
-	// 		)
-	// 	case UpdAnyAction, UpdOneAction:
-	// 		return nil
-	// 	}
-	// 	panic("unreachable code")
-	// }
-	// if !involved.UpdateMode.Ordered() {
-	// 	switch involved.UpdateMode.Actions() {
-	// 	case UpdAllActions:
-	// 		// TODO Assert g ordered & same list of actions
-	// 	case UpdSomeActions:
-	// 		return nil
-	// 	case UpdAnyAction, UpdOneAction:
-	// 		// TODO Assert g hase exactly 1 same action
-	// 	}
-	// 	panic("unreachable code")
-	// }
-	// if !g.UpdateMode.Ordered() {
-	// 	if len(g.ResultOf) == 1 { // (v.s.) => len(involved.ResultOf) > 1
-	// 		switch involved.UpdateMode.Actions() {
-	// 		}
-	// 	}
-	// 	return errors.New("unordered involves ordered")
-	// }
-	// return errors.New("NYI: Goal.UpdateConsistency()")
 }
 
 func (g *Goal) String() string {

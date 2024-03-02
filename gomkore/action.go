@@ -13,10 +13,11 @@ import (
 type Action struct {
 	Op          Operation
 	IgnoreError bool
-	premises    []*Goal
-	results     []*Goal
 
-	prj     *Project
+	prj      *Project
+	premises []*Goal
+	results  []*Goal
+
 	lockGID BuildID
 	lastBID BuildID
 }

@@ -1,8 +1,10 @@
 package gomk
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"hash"
 
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
 )
@@ -50,3 +52,34 @@ const (
 
 	UpdUnordered gomkore.UpdateMode = 4
 )
+
+func Tangible(gs []*Goal) (tgs []*Goal) {
+	for _, g := range gs {
+		if !g.IsAbstract() {
+			tgs = append(tgs, g)
+		}
+	}
+	return tgs
+}
+
+func OpFunc(desc string, f func(context.Context, *Action, *Env) error) gomkore.Operation {
+	return funcOp{desc: desc, f: f}
+}
+
+type funcOp struct {
+	desc string
+	f    func(context.Context, *Action, *Env) error
+}
+
+func (fo funcOp) Describe(*Action, *Env) string {
+	return fo.desc
+}
+
+func (fo funcOp) Do(ctx context.Context, a *Action, env *Env) error {
+	env.Log.Debug("call `function`", `function`, fo.desc)
+	return fo.f(ctx, a, env)
+}
+
+func (fo funcOp) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+	return false, nil
+}

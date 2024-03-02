@@ -18,6 +18,7 @@ import (
 
 type FsArtefact interface {
 	gomkore.Artefact
+	// Path retuns the OS specific path (see filepath.FromSlash)
 	Path() string
 	Rel(in ProjectEd) string
 	Stat(in ProjectEd) (fs.FileInfo, error)
@@ -105,17 +106,21 @@ func FsGoals(prj ProjectEd, dir, dirTmpl Directory) (goals []GoalEd, err error) 
 }
 
 type DirList struct {
-	Dir    string
+	Dir    string // UNIX stype path with '/'
 	Glob   string
 	Select DirListSelect
 }
 
 var _ Directory = DirList{}
 
-func (d DirList) Rel(in ProjectEd) string                { return in.RelPath(d.Path()) }
-func (d DirList) Path() string                           { return d.Dir }
+func (d DirList) Rel(in ProjectEd) string { return in.RelPath(d.Path()) }
+
+// Path implements [FsArtefact].Path
+func (d DirList) Path() string { return filepath.FromSlash(d.Dir) }
+
 func (d DirList) Stat(in ProjectEd) (fs.FileInfo, error) { return FsStat(d, in.p) }
-func (d DirList) Exists(in ProjectEd) bool               { return FsExists(d, in.p) }
+
+func (d DirList) Exists(in ProjectEd) bool { return FsExists(d, in.p) }
 
 func (d DirList) List(in ProjectEd) (ls []string, err error) {
 	return FsDirList(d, in.p)
@@ -156,17 +161,21 @@ func (d DirList) StateAt(in *Project) time.Time {
 }
 
 type DirContent struct {
-	Dir    string
+	Dir    string // UNIX stype path with '/'
 	Glob   string
 	Select DirListSelect
 }
 
 var _ Directory = DirContent{}
 
-func (d DirContent) Rel(prj ProjectEd) string               { return prj.RelPath(d.Path()) }
-func (d DirContent) Path() string                           { return d.Dir }
+func (d DirContent) Rel(prj ProjectEd) string { return prj.RelPath(d.Path()) }
+
+// Path implements [FsArtefact].Path
+func (d DirContent) Path() string { return filepath.FromSlash(d.Dir) }
+
 func (d DirContent) Stat(in ProjectEd) (fs.FileInfo, error) { return FsStat(d, in.p) }
-func (d DirContent) Exists(in ProjectEd) bool               { return FsExists(d, in.p) }
+
+func (d DirContent) Exists(in ProjectEd) bool { return FsExists(d, in.p) }
 
 func (d DirContent) List(in ProjectEd) (ls []string, err error) {
 	return FsDirContent(d, in.p)
@@ -228,10 +237,14 @@ type File string
 
 var _ FsArtefact = File("")
 
-func (f File) Rel(prj ProjectEd) string               { return prj.RelPath(f.Path()) }
-func (f File) Path() string                           { return string(f) }
+func (f File) Rel(prj ProjectEd) string { return prj.RelPath(f.Path()) }
+
+// Path implements [FsArtefact].Path
+func (f File) Path() string { return filepath.FromSlash(string(f)) }
+
 func (f File) Stat(in ProjectEd) (fs.FileInfo, error) { return FsStat(f, in.p) }
-func (f File) Exists(in ProjectEd) bool               { return FsExists(f, in.p) }
+
+func (f File) Exists(in ProjectEd) bool { return FsExists(f, in.p) }
 
 func (f File) Name(in *Project) string { return in.RelPath(f.Path()) }
 
@@ -287,9 +300,12 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) (err error) {
 	}()
 	var prems []FsArtefact
 	for _, pre := range a.Premises() {
-		if fsa, ok := pre.Artefact.(FsArtefact); ok {
+		switch fsa := pre.Artefact.(type) {
+		case FsArtefact:
 			prems = append(prems, fsa)
-		} else {
+		case Abstract:
+			// do nothing
+		default:
 			return fmt.Errorf("FS copy: illegal premise artefact type %T", pre)
 		}
 	}
@@ -299,6 +315,8 @@ func (cp FsCopy) Do(_ context.Context, a *Action, env *Env) (err error) {
 			return cp.toFile(a.Project(), res, prems, env)
 		case Directory:
 			return cp.toDir(a.Project(), res, prems, env)
+		case Abstract:
+			// do nothing
 		default:
 			return fmt.Errorf("FS copy: illegal result artefact type %T", res)
 		}

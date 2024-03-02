@@ -67,7 +67,7 @@ func (bd *Builder) ProjectContext(ctx context.Context, prj *Project) error {
 	return nil
 }
 
-func (bd *Builder) Goal(gs ...*Goal) error {
+func (bd *Builder) Goals(gs ...*Goal) error {
 	return bd.GoalsContext(context.Background(), gs...)
 }
 
@@ -85,21 +85,36 @@ func (bd *Builder) GoalsContext(ctx context.Context, gs ...*Goal) error {
 	if bd.Env == nil {
 		bd.Env = DefaultEnv()
 	}
-	bd.Env.Log = bd.Env.Log.With("project", prj.String())
+	origLog := bd.Env.Log
 	var tr *trace
 	bd.gidSeq = 0
 	for _, g := range gs {
 		if p := g.Project(); p != prj {
-			prj.Unlock()
+			if prj != nil {
+				prj.Unlock()
+			}
 			bid := p.LockBuild()
 			tr = startTrace(bid)
 			prj = p
+			bd.Env.Log = origLog.With("project", prj.String())
 		}
 		if err := bd.buildGoal(ctx, g, tr); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (bd *Builder) GoalEds(gs ...GoalEd) error {
+	return bd.GoalEdsContext(context.Background(), gs...)
+}
+
+func (bd *Builder) GoalEdsContext(ctx context.Context, gs ...GoalEd) error {
+	tmp := make([]*gomkore.Goal, len(gs))
+	for i, g := range gs {
+		tmp[i] = g.g
+	}
+	return bd.GoalsContext(ctx, tmp...)
 }
 
 func (bd *Builder) NamedGoals(prj *Project, names ...string) error {
@@ -140,8 +155,8 @@ func (bd *Builder) buildGoal(ctx context.Context, g *Goal, tr *trace) error {
 		}
 	}
 
-	chgs := bd.checkPreTimes(g)
-	if len(chgs) == 0 {
+	update, chgs := bd.checkPreTimes(g)
+	if !update {
 		bd.Env.Log.Info("`goal` already up-to-date",
 			`goal`, g.String(),
 			`trace`, tr,
@@ -302,8 +317,10 @@ func (bd *Builder) updateOne(ctx context.Context, bid gomkore.BuildID, g *Goal, 
 	return err
 }
 
-// TODO Consistency for concurrent builds
-func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
+// need update if there are no pre goals or if timestamps indicate an update
+func (bd *Builder) checkPreTimes(g *Goal) (update bool, chgs []int) {
+	// TODO Consistency for concurrent builds
+	update = true
 	gaTS := g.Artefact.StateAt(g.Project())
 	for actIdx, act := range g.ResultOf {
 		if gaTS.IsZero() {
@@ -312,6 +329,7 @@ func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
 		}
 	PREMISE_LOOP:
 		for _, pre := range act.Premises() {
+			update = false
 			preTS := pre.Artefact.StateAt(g.Project())
 			switch {
 			case preTS.IsZero():
@@ -323,7 +341,7 @@ func (bd *Builder) checkPreTimes(g *Goal) (chgs []int) {
 			}
 		}
 	}
-	return chgs
+	return update || len(chgs) > 0, chgs
 }
 
 func (bd *Builder) newHash() hash.Hash {

@@ -54,7 +54,7 @@ func (gb *GoBuild) Describe(a *Action, _ *Env) string {
 
 func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
 	var err error
-	if len(a.Results()) != 1 {
+	if len(a.Results()) != 1 { // TODO support >1 dirs as packages
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "go build with %d results:", len(a.Results()))
 		for _, r := range a.Results() {
@@ -121,7 +121,7 @@ func (*GoBuild) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
 type GoTest struct {
 	GoTool
 	CWD  string
-	Pkgs []string
+	Pkgs []string // TODO use action prems instead
 }
 
 var _ gomkore.Operation = (*GoTest)(nil)
@@ -156,7 +156,7 @@ func (*GoTest) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
 type GoGenerate struct {
 	GoTool
 	CWD       string
-	FilesPkgs []string
+	FilesPkgs []string // TODO use action prems instead
 	Run       string
 	Skip      string
 }
@@ -203,7 +203,7 @@ type GoRun struct {
 	GoTool
 	CWD  string
 	Exec string
-	Pkg  string
+	Pkg  string // TODO use action prems instead (>1)
 	Args []string
 }
 

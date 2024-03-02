@@ -190,10 +190,17 @@ func (cc *ConvertCmd) Describe(*Action, *Env) string {
 }
 
 func (cc *ConvertCmd) Do(ctx context.Context, a *Action, env *Env) error {
-	if len(a.Premises()) != 1 || len(a.Results()) != 1 {
-		return errors.New("ConvertCmd requires one premise and one result file goal")
+	var pre, res *Goal
+	if tpre := Tangible(a.Premises()); len(tpre) != 1 {
+		return errors.New("ConvertCmd requires one file premise")
+	} else {
+		pre = tpre[0]
 	}
-	pre, res := a.Premise(0), a.Result(0)
+	if tres := Tangible(a.Results()); len(tres) != 1 {
+		return errors.New("ConvertCmd requires one file result")
+	} else {
+		res = tres[0]
+	}
 	inFile, ok := pre.Artefact.(File)
 	if !ok {
 		return fmt.Errorf("ConvertCmd expect one premise file, have one %T", pre.Artefact)

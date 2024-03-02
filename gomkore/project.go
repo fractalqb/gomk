@@ -165,20 +165,20 @@ func (prj *Project) NewAction(premises, results []*Goal, op Operation) (*Action,
 	if err := prj.consistentPrj(premises, results); err != nil {
 		return nil, err
 	}
-	if err := updateConsistency(results); err != nil {
-		return nil, err
-	}
 	a := &Action{
-		premises: premises,
-		results:  results,
 		Op:       op,
 		prj:      prj,
+		premises: premises,
+		results:  results,
 	}
 	for _, p := range premises {
 		p.PremiseOf = append(p.PremiseOf, a)
 	}
 	for _, r := range results {
 		r.ResultOf = append(r.ResultOf, a)
+	}
+	if err := updateConsistency(results); err != nil {
+		return nil, err
 	}
 	prj.actions = append(prj.actions, a)
 	return a, nil
@@ -227,26 +227,40 @@ func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
 				updMode = " *"
 			}
 		}
+		var style string
 		if _, ok := g.Artefact.(Abstract); ok {
-			akku(fmt.Fprintf(w,
-				"\t\"%p\" [shape=box,style=dashed,label=\"%s%s\"];\n",
-				g,
-				escDotID(n),
-				updMode,
-			))
-		} else {
-			akku(fmt.Fprintf(w, "\t\"%p\" [shape=record,label=\"{%s%s|%s}\"];\n",
-				g,
-				tn,
-				updMode,
-				escDotID(n),
-			))
+			if len(g.ResultOf) == 0 || len(g.PremiseOf) == 0 {
+				style = ",style=\"dashed,bold\""
+			} else {
+				style = ",style=dashed"
+			}
+		} else if len(g.ResultOf) == 0 || len(g.PremiseOf) == 0 {
+			style = ",style=bold"
 		}
+		akku(fmt.Fprintf(w, "\t\"%p\" [shape=record%s,label=\"{%s%s|%s}\"];\n",
+			g,
+			style,
+			tn,
+			updMode,
+			escDotID(n),
+		))
 		for i, a := range g.ResultOf {
 			if a.Op == nil {
-				akku(fmt.Fprintf(w, "\t\"%p\" [shape=none,label=\"implicit\"];\n", a))
+				akku(fmt.Fprintf(w, "\t\"%p\" [shape=none,label=\"implicit\"];\n",
+					a,
+				))
+			} else if len(a.premises) == 0 {
+				akku(fmt.Fprintf(w,
+					"\t\"%p\" [shape=box,style=\"rounded,bold\",label=\"%s\"];\n",
+					a,
+					escDotID(a.String()),
+				))
 			} else {
-				akku(fmt.Fprintf(w, "\t\"%p\" [shape=box,style=rounded,label=\"%s\"];\n", a, escDotID(a.String())))
+				akku(fmt.Fprintf(w,
+					"\t\"%p\" [shape=box,style=rounded,label=\"%s\"];\n",
+					a,
+					escDotID(a.String()),
+				))
 			}
 			var lb string
 			if g.UpdateMode.Ordered() {
