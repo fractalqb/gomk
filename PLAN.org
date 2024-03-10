@@ -24,7 +24,8 @@ goals, so skip them)
 - GoGenerate (completely ignores premises)
 - GoRun (completely ignores premises)
   
-** TODO Move Dot files from gomkore to gomk
+** DONE Move Dot files from gomkore to gomk
+   CLOSED: [2024-03-06 Mi 21:11]
 
 ** TODO Move builder into core [0/1]
 1. [ ]  Should this really be done?

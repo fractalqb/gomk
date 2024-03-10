@@ -1,9 +1,16 @@
 package gomk
 
-import "git.fractalqb.de/fractalqb/gomk/gomkore"
+import (
+	"io/fs"
+
+	"git.fractalqb.de/fractalqb/gomk/gomkore"
+	"git.fractalqb.de/fractalqb/gomk/mkfs"
+)
 
 // ProjectEd is used with [Edit].
 type ProjectEd struct{ p *Project }
+
+func (ed ProjectEd) Project() *Project { return ed.p }
 
 func (ed ProjectEd) NewAction(premises, results []GoalEd, op gomkore.Operation) ActionEd {
 	prems, ress := goals(premises), goals(results)
@@ -24,10 +31,26 @@ func (ed ProjectEd) Goal(atf gomkore.Artefact) GoalEd {
 	return GoalEd{g}
 }
 
-func (ed ProjectEd) RelPath(p string) string { return ed.p.RelPath(p) }
+func (ed ProjectEd) RelPath(p string) string {
+	rp, err := ed.p.RelPath(p)
+	if err != nil {
+		panic(err)
+	}
+	return rp
+}
+
+func (ed ProjectEd) FsStat(a mkfs.Artefact) fs.FileInfo {
+	return mustRet(mkfs.Stat(a, ed.p))
+}
+
+func (ed ProjectEd) FsExists(a mkfs.Artefact) bool {
+	return mustRet(mkfs.Exists(a, ed.p))
+}
 
 // GoalEd is used with [Edit].
 type GoalEd struct{ g *Goal }
+
+func (ed GoalEd) Goal() *Goal { return ed.g }
 
 func (ed GoalEd) Project() ProjectEd { return ProjectEd{ed.g.Project()} }
 
@@ -69,6 +92,8 @@ func goals(gs []GoalEd) []*Goal {
 
 // ActionEd is used with [Edit].
 type ActionEd struct{ a *gomkore.Action }
+
+func (ed ActionEd) Action() *Action { return ed.a }
 
 func (ed ActionEd) Project() ProjectEd {
 	return ProjectEd{ed.a.Project()}

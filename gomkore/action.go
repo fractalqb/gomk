@@ -6,6 +6,13 @@ import (
 	"sync/atomic"
 )
 
+type Operation interface {
+	// The hints are optional
+	Describe(actionHint *Action, envHint *Env) string
+	Do(ctx context.Context, a *Action, env *Env) error
+	WriteHash(h hash.Hash, a *Action, env *Env) (bool, error)
+}
+
 // An Action is something you can do in your [Project] to achieve at least one
 // [Goal]. The actual implementation of the action is an [Operation]. An action
 // without an operation is an "implicit" action, i.e. if all its premises are
@@ -18,7 +25,7 @@ type Action struct {
 	premises []*Goal
 	results  []*Goal
 
-	lockGID BuildID
+	lockGID uintptr
 	lastBID BuildID
 }
 
@@ -79,21 +86,14 @@ func (a *Action) WriteHash(h hash.Hash, env *Env) (bool, error) {
 	return a.Op.WriteHash(h, a, env)
 }
 
-func (a *Action) tryLock(byGID BuildID) (blockingGID BuildID) {
-	if atomic.CompareAndSwapUint64(&a.lockGID, 0, byGID) {
+func (a *Action) tryLock(byGID uintptr) (blockingGID uintptr) {
+	if atomic.CompareAndSwapUintptr(&a.lockGID, 0, byGID) {
 		return 0
 	}
-	return atomic.LoadUint64(&a.lockGID)
+	return atomic.LoadUintptr(&a.lockGID)
 }
 
-func (a *Action) unlock() { atomic.StoreUint64(&a.lockGID, 0) }
-
-type Operation interface {
-	// The hints are optional
-	Describe(actionHint *Action, envHint *Env) string
-	Do(ctx context.Context, a *Action, env *Env) error
-	WriteHash(h hash.Hash, a *Action, env *Env) (bool, error)
-}
+func (a *Action) unlock() { atomic.StoreUintptr(&a.lockGID, 0) }
 
 func updateConsistency(results []*Goal) error {
 	for _, g := range results {

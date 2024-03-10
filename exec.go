@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
+	"git.fractalqb.de/fractalqb/gomk/mkfs"
 )
 
 type CmdOp struct {
@@ -21,6 +22,7 @@ type CmdOp struct {
 	Args            []string
 	InFile, OutFile string
 	Desc            string
+	UsesEnv         []string
 }
 
 var _ gomkore.Operation = (*CmdOp)(nil)
@@ -77,8 +79,8 @@ func (op *CmdOp) Do(ctx context.Context, a *Action, env *Env) error {
 	return err
 }
 
-// TODO include environment values
-func (op *CmdOp) WriteHash(h hash.Hash, a *Action, _ *Env) (bool, error) {
+// WriteHash considers env only if op.UsesEnv is set correctly.
+func (op *CmdOp) WriteHash(h hash.Hash, a *Action, env *Env) (bool, error) {
 	fmt.Fprintln(h, op.CWD)
 	fmt.Fprintln(h, op.Exe)
 	for _, arg := range op.Args {
@@ -86,6 +88,11 @@ func (op *CmdOp) WriteHash(h hash.Hash, a *Action, _ *Env) (bool, error) {
 	}
 	fmt.Fprintln(h, op.InFile)
 	fmt.Fprintln(h, op.OutFile)
+	for _, e := range op.UsesEnv {
+		if v, ok := env.Tag(e); ok {
+			fmt.Fprintf(h, "%s=%s\n", e, v)
+		}
+	}
 	return true, nil
 }
 
@@ -137,7 +144,9 @@ func (po PipeOp) Do(ctx context.Context, a *Action, env *Env) error {
 	for i, cmd := range cmds {
 		if err := cmd.Start(); err != nil {
 			for k := 0; k < i; k++ {
-				cmds[k].Process.Kill() // TODO check
+				if e := cmds[k].Process.Kill(); e != nil {
+					env.Log.Warn("aborting pipe: %w", e)
+				}
 			}
 			return err
 		}
@@ -145,7 +154,9 @@ func (po PipeOp) Do(ctx context.Context, a *Action, env *Env) error {
 	for i, cmd := range cmds {
 		if err := cmd.Wait(); err != nil {
 			for k := i + 1; k < len(cmds); k++ {
-				cmds[k].Process.Kill() // TODO check
+				if e := cmds[k].Process.Kill(); e != nil {
+					env.Log.Warn("aborting pipe: %w", e)
+				}
 			}
 			return err
 		}
@@ -190,27 +201,31 @@ func (cc *ConvertCmd) Describe(*Action, *Env) string {
 }
 
 func (cc *ConvertCmd) Do(ctx context.Context, a *Action, env *Env) error {
+	cwd, err := a.Project().AbsPath("")
+	if err != nil {
+		return err
+	}
 	var pre, res *Goal
-	if tpre := Tangible(a.Premises()); len(tpre) != 1 {
+	if tpre, _ := Goals(a.Premises(), false, Tangible); len(tpre) != 1 {
 		return errors.New("ConvertCmd requires one file premise")
 	} else {
 		pre = tpre[0]
 	}
-	if tres := Tangible(a.Results()); len(tres) != 1 {
+	if tres, _ := Goals(a.Results(), false, Tangible); len(tres) != 1 {
 		return errors.New("ConvertCmd requires one file result")
 	} else {
 		res = tres[0]
 	}
-	inFile, ok := pre.Artefact.(File)
+	inFile, ok := pre.Artefact.(mkfs.File)
 	if !ok {
 		return fmt.Errorf("ConvertCmd expect one premise file, have one %T", pre.Artefact)
 	}
-	outFile, ok := res.Artefact.(File)
+	outFile, ok := res.Artefact.(mkfs.File)
 	if !ok {
 		return fmt.Errorf("ConvertCmd expect one reslut file, have one %T", res.Artefact)
 	}
 	op := &CmdOp{
-		CWD:  filepath.Dir(inFile.Path()),
+		CWD:  cwd,
 		Exe:  cc.Exe,
 		Args: cc.Args,
 		Desc: fmt.Sprintf("%s: %s -> %s",
@@ -220,13 +235,13 @@ func (cc *ConvertCmd) Do(ctx context.Context, a *Action, env *Env) error {
 		),
 	}
 	if cc.Output != "" && cc.Output[0] == '-' {
-		op.Args = append(op.Args, cc.Output, filepath.Base(outFile.Path()))
+		op.Args = append(op.Args, cc.Output, outFile.Path())
 	} else if cc.Output == "1" {
-		op.Args = append(op.Args, filepath.Base(outFile.Path()))
+		op.Args = append(op.Args, outFile.Path())
 	}
-	op.Args = append(op.Args, filepath.Base(inFile.Path()))
+	op.Args = append(op.Args, inFile.Path())
 	if cc.Output == "2" {
-		op.Args = append(op.Args, filepath.Base(outFile.Path()))
+		op.Args = append(op.Args, outFile.Path())
 	} else if cc.Output == "stdout" {
 		op.OutFile = outFile.Path()
 	}

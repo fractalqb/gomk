@@ -5,9 +5,11 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"git.fractalqb.de/fractalqb/eloc/must"
 	"git.fractalqb.de/fractalqb/gomk"
+	"git.fractalqb.de/fractalqb/gomk/mkfs"
 	"git.fractalqb.de/fractalqb/qblog"
 )
 
@@ -50,31 +52,54 @@ func main() {
 		goalTest := prj.Goal(gomk.Abstract("test")).
 			By(&goTest, goalGoGen)
 
-		goalBuildFoo := prj.Goal(gomk.File("cmd/foo/foo")).
-			By(&goBuild, goalTest)
+		goalPkgFoo := prj.Goal(mkfs.DirFiles("cmd/foo", "", 1)).
+			ImpliedBy(goalTest)
 
-		goalBuildBar := prj.Goal(gomk.File("cmd/bar/bar")).
-			By(&goBuild, goalTest)
+		goalPkgBar := prj.Goal(mkfs.DirFiles("cmd/bar", "", 1)).
+			ImpliedBy(goalTest)
 
-		mdGoals := must.Ret(gomk.FsGoals(prj, gomk.DirList{Dir: "doc", Glob: "*.md"}, nil))
+		prj.Goal(mkfs.DirTree{
+			Dir: "dist",
+			Filter: mkfs.All{
+				mkfs.IsDir(false),
+				mkfs.Mode{Any: 0111},
+				mkfs.MaxPathLen(1),
+			},
+		}).
+			By(&goBuild, goalPkgFoo, goalPkgBar)
+
+		mdSrcDir := mkfs.DirList{Dir: "doc", Filter: mkfs.NameMatch("*.md")}
+		mdGoals := gomk.FsGoals(prj, mdSrcDir, nil)
+
+		docOut := mkfs.DirFiles("dist/doc", "", 0)
 		goals := gomk.Convert(mdGoals,
-			gomk.FileExt(".html").Convert,
+			gomk.OutFile{
+				Ext:   gomk.ExtMap{".md": ".html"},
+				Strip: mdSrcDir,
+				Dest:  docOut,
+			}.Artefact,
 			// requires 'markdown' to be in the path
 			&gomk.ConvertCmd{Exe: "markdown", Output: "stdout"},
 		)
 		goalDoc := prj.Goal(gomk.Abstract("doc")).ImpliedBy(goals...)
 		goalDoc.SetUpdateMode(gomk.UpdAllActions | gomk.UpdUnordered)
 
-		pumlGoals := must.Ret(gomk.FsGoals(prj, gomk.DirList{Dir: "doc", Glob: "*.puml"}, nil))
+		pumlSrcDir := mkfs.DirList{Dir: "doc", Filter: mkfs.NameMatch("*.puml")}
+		pumlGoals := gomk.FsGoals(prj, pumlSrcDir, nil)
 		goals = gomk.Convert(pumlGoals,
-			gomk.FileExt(".png").Convert,
+			gomk.OutFile{
+				Ext:   gomk.ExtMap{".puml": ".png"},
+				Strip: pumlSrcDir,
+				Dest:  docOut,
+			}.Artefact,
 			// requires 'plantuml' to be in the path
-			&gomk.ConvertCmd{Exe: "plantuml"},
+			&gomk.ConvertCmd{
+				Exe: "plantuml",
+				// PlantUML takes -o relative to input, not CWD
+				Args: []string{"-o", filepath.Join("..", prj.RelPath(docOut.Path()))},
+			},
 		)
 		goalDoc.ImpliedBy(goals...)
-
-		prj.Goal(gomk.DirList{Dir: "dist"}).
-			By(gomk.FsCopy{MkDirMode: 0777}, goalBuildFoo, goalBuildBar)
 	}))
 
 	if clean {
@@ -88,7 +113,8 @@ func main() {
 	}
 
 	if writeDot {
-		if _, err := prj.WriteDot(os.Stdout); err != nil {
+		dia := gomk.Diagrammer{RankDir: "LR"}
+		if err := dia.WriteDot(os.Stdout, prj); err != nil {
 			slog.Error(err.Error())
 			os.Exit(1)
 		}

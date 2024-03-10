@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
+	"git.fractalqb.de/fractalqb/gomk/mkfs"
 )
 
 type GoTool struct {
@@ -53,8 +53,8 @@ func (gb *GoBuild) Describe(a *Action, _ *Env) string {
 }
 
 func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
-	var err error
-	if len(a.Results()) != 1 { // TODO support >1 dirs as packages
+	res, _ := Goals(a.Results(), false, Tangible)
+	if len(res) > 1 {
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "go build with %d results:", len(a.Results()))
 		for _, r := range a.Results() {
@@ -62,33 +62,25 @@ func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
 		}
 		return errors.New(sb.String())
 	}
-	var chdir string
-	switch rs := a.Result(0).Artefact.(type) {
-	case DirList:
-		chdir = rs.Path()
-	case File:
-		chdir = filepath.Dir(rs.Path())
-	default:
-		return fmt.Errorf("illegal type %T of go build result", rs)
+	pkgs, err := Goals(a.Premises(), true, Tangible, AType[mkfs.Directory])
+	if err != nil {
+		return fmt.Errorf("go build premises: %w", err)
 	}
 	prj := a.Project()
-	if st, err := os.Stat(filepath.Join(prj.Dir, chdir)); err != nil {
-		return fmt.Errorf("path '%s' error: %w", chdir, err)
-	} else if !st.IsDir() {
-		return fmt.Errorf("path '%s' is not a directory", chdir)
-	}
 	goTool, err := gb.goExe()
 	if err != nil {
 		return err
 	}
-	op := &CmdOp{
-		CWD:  prj.Dir,
-		Exe:  goTool,
-		Args: []string{"build", "-C", chdir},
-		Desc: fmt.Sprintf("%s$ go build", chdir),
-	}
+	op := &CmdOp{CWD: prj.Dir, Exe: goTool, Args: []string{"build"}}
 	if gb.Install {
 		op.Args[0] = "install"
+	}
+	if len(res) == 1 {
+		fs, ok := res[0].Artefact.(mkfs.Artefact)
+		if !ok {
+			return fmt.Errorf("invalid go buidl result type %T", res[0])
+		}
+		op.Args = append(op.Args, "-o", fs.Path())
 	}
 	if gb.TrimPath {
 		op.Args = append(op.Args, "-trimpath")
@@ -110,6 +102,13 @@ func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
 	}
 	if ldFlags.Len() > 0 {
 		op.Args = append(op.Args, "-ldflags", ldFlags.String())
+	}
+	for _, pkg := range pkgs {
+		dir := pkg.Artefact.(mkfs.Directory).Path()
+		if dir, err = prj.RelPath(dir); err != nil {
+			return fmt.Errorf("go build package: %w", err)
+		}
+		op.Args = append(op.Args, "./"+dir)
 	}
 	return op.Do(ctx, a, env)
 }

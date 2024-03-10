@@ -10,6 +10,25 @@ import (
 	"github.com/bits-and-blooms/bitset"
 )
 
+// Artefact represents the tangible outcome of a [Goal] being reached. A special
+// case is the [Abstract] artefact.
+type Artefact interface {
+	// Name returns the name of the artefact that must be unique in the Project.
+	Name(in *Project) string
+
+	// StateAs returns the time at which the artefact reached its current state.
+	// If this cannot be provided, the zero Time is returned.
+	StateAt(in *Project) time.Time
+}
+
+type Abstract string
+
+var _ Artefact = Abstract("")
+
+func (a Abstract) Name(*Project) string { return string(a) }
+
+func (a Abstract) StateAt(*Project) time.Time { return time.Time{} }
+
 type UpdateMode uint
 
 const (
@@ -51,20 +70,31 @@ func (m UpdateMode) Ordered() bool       { return (m & UpdUnordered) == 0 }
 // dependent actions should not be carried out before the goal is reached.
 type Goal struct {
 	UpdateMode UpdateMode
-	ResultOf   []*Action // Actions that result in this goal.
-	PremiseOf  []*Action // Dependent actions of this goal.
 	Artefact   Artefact
 
-	sync.Mutex
-
 	prj       *Project
-	lastBID   BuildID
-	buildInfo any // TODO is it necessary?
+	resultOf  []*Action
+	premiseOf []*Action
+
+	sync.Mutex
+	lastBID BuildID
 }
 
 func (g *Goal) Project() *Project { return g.prj }
 
 func (g *Goal) Name() string { return g.Artefact.Name(g.Project()) }
+
+// ResultOf returns the actions that result in this goal.
+func (g *Goal) ResultOf() []*Action { return g.resultOf }
+
+// PreAction returns [Goal.ResultOf]()[i]
+func (g *Goal) PreAction(i int) *Action { return g.resultOf[i] }
+
+// PremiseOf returns the actions on which g depends.
+func (g *Goal) PremiseOf() []*Action { return g.premiseOf }
+
+// PostAction returns [Goal.PremiseOf]()[i]
+func (g *Goal) PostAction(i int) *Action { return g.premiseOf[i] }
 
 func (g *Goal) IsAbstract() bool {
 	_, ok := g.Artefact.(Abstract)
@@ -76,11 +106,11 @@ func (g *Goal) UpdateConsistency(involved *Goal) error {
 	if involved == g {
 		return nil
 	}
-	switch len(g.ResultOf) {
+	switch len(g.ResultOf()) {
 	case 0:
 		return nil
 	case 1:
-		if len(involved.ResultOf) <= 1 {
+		if len(involved.ResultOf()) <= 1 {
 			return nil
 		}
 	}
@@ -100,29 +130,46 @@ func (g *Goal) String() string {
 	return fmt.Sprintf("[%s]%s", an, tn)
 }
 
+// CheckPreTimes check if g needs to be updated according to the timestamps of
+// all of its premises.
+func (g *Goal) CheckPreTimes() (chgs []int) {
+	// TODO Consistency for concurrent builds
+	gaTS := g.Artefact.StateAt(g.Project())
+	for actIdx, act := range g.ResultOf() {
+		if gaTS.IsZero() || len(act.Premises()) == 0 {
+			chgs = append(chgs, actIdx)
+			continue
+		}
+	PREMISE_LOOP:
+		for _, pre := range act.Premises() {
+			preTS := pre.Artefact.StateAt(g.Project())
+			switch {
+			case preTS.IsZero():
+				chgs = append(chgs, actIdx)
+				break PREMISE_LOOP
+			case gaTS.Before(preTS):
+				chgs = append(chgs, actIdx)
+				break PREMISE_LOOP
+			}
+		}
+	}
+	return chgs
+}
+
 // LockBuild locks g once for the current build of g's project. If g was already
-// locked for the build (0, nil) is returend. If g can be locked an info is not
-// nil g's build info will be set to info()
-func (g *Goal) LockBuild(info func() any) BuildID {
+// locked for the build 0 is returned.
+func (g *Goal) LockBuild() BuildID {
 	g.Mutex.Lock()
 	if plb := g.Project().lastBuild; g.lastBID < plb {
 		g.lastBID = plb
-		if info == nil {
-			g.buildInfo = nil
-		} else {
-			g.buildInfo = info()
-		}
 		return plb
 	}
 	g.Mutex.Unlock()
 	return 0
 }
 
-// BuildInfo must only be called by the goroutine that holds the lock.
-func (g *Goal) BuildInfo() any { return g.buildInfo }
-
-func (g *Goal) LockPreActions(gid BuildID) {
-	todo := len(g.ResultOf)
+func (g *Goal) LockPreActions(gid uintptr) {
+	todo := len(g.ResultOf())
 	locked := bitset.New(uint(todo))
 
 	var (
@@ -130,20 +177,20 @@ func (g *Goal) LockPreActions(gid BuildID) {
 		ok bool
 	)
 	for todo > 0 {
-		if i, ok = locked.NextClear(i + 1); !ok { // TODO ??? i+1 >= size
+		if i, ok = locked.NextClear(i + 1); !ok {
 			i, ok = locked.NextClear(0)
 			if !ok {
 				panic("no next to lock but todo > 0")
 			}
 		}
-		blockGID := g.ResultOf[i].tryLock(gid)
+		blockGID := g.resultOf[i].tryLock(gid)
 		if blockGID > gid { // I lost => restart
 			for j, ok := locked.NextSet(0); ok; j, ok = locked.NextSet(j + 1) {
-				g.ResultOf[j].unlock()
+				g.resultOf[j].unlock()
 			}
 			locked.ClearAll()
-			todo = len(g.ResultOf)
-			// Sleep for short to not support the winner
+			todo = len(g.ResultOf())
+			// Sleep for short to not stay in the winner's way
 			time.Sleep(time.Millisecond) // TODO reasonable?
 		} else {
 			locked.Set(i)
@@ -153,26 +200,7 @@ func (g *Goal) LockPreActions(gid BuildID) {
 }
 
 func (g *Goal) UnlockPreActions() {
-	for _, act := range g.ResultOf {
+	for _, act := range g.ResultOf() {
 		act.unlock()
 	}
 }
-
-// Artefact represents the tangible outcome of a [Goal] being reached. A special
-// case is the [Abstract] artefact.
-type Artefact interface {
-	// Name returns the name of the artefact that must be unique in the Project.
-	Name(in *Project) string
-
-	// StateAs returns the time at which the artefact reached its current state.
-	// If this cannot be provided, the zero Time is returned.
-	StateAt(in *Project) time.Time
-}
-
-type Abstract string
-
-var _ Artefact = Abstract("")
-
-func (a Abstract) Name(*Project) string { return string(a) }
-
-func (a Abstract) StateAt(*Project) time.Time { return time.Time{} }

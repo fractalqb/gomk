@@ -53,13 +53,33 @@ const (
 	UpdUnordered gomkore.UpdateMode = 4
 )
 
-func Tangible(gs []*Goal) (tgs []*Goal) {
-	for _, g := range gs {
-		if !g.IsAbstract() {
-			tgs = append(tgs, g)
+// Goals is meant to be used when implementing [Operation] to select and check
+// linked goals gs.
+//
+// See also [Tangible], [AType]
+func Goals(gs []*Goal, exclusive bool, matchAll ...func(*Goal) bool) ([]*Goal, error) {
+	mLen1 := len(matchAll) - 1
+	res := make([]*Goal, 0, len(gs))
+NEXT_GOAL:
+	for gi, g := range gs {
+		for pi, pred := range matchAll {
+			if !pred(g) {
+				if exclusive && pi == mLen1 {
+					return nil, fmt.Errorf("illegal goal %d: %s", gi, g.Name())
+				}
+				continue NEXT_GOAL
+			}
 		}
+		res = append(res, g)
 	}
-	return tgs
+	return res, nil
+}
+
+func Tangible(g *Goal) bool { return !g.IsAbstract() }
+
+func AType[A gomkore.Artefact](g *Goal) bool {
+	_, ok := g.Artefact.(A)
+	return ok
 }
 
 func OpFunc(desc string, f func(context.Context, *Action, *Env) error) gomkore.Operation {
@@ -82,4 +102,15 @@ func (fo funcOp) Do(ctx context.Context, a *Action, env *Env) error {
 
 func (fo funcOp) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
 	return false, nil
+}
+
+func mustEd(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func mustRet[T any](v T, err error) T {
+	mustEd(err)
+	return v
 }

@@ -2,12 +2,9 @@ package gomkore
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 )
@@ -26,8 +23,6 @@ type Project struct {
 }
 
 var _ Artefact = (*Project)(nil)
-
-// TODO _ Operation = (*Project)(nil) to support nested projects??? => ~Builder?
 
 func NewProject(dir string) *Project {
 	if dir == "" {
@@ -79,6 +74,8 @@ func (prj *Project) Goals(addTo []*Goal) []*Goal {
 	return addTo
 }
 
+func (prj *Project) Actions() []*Action { return prj.actions }
+
 func (prj *Project) FindGoal(name string) *Goal {
 	return prj.goals[name]
 }
@@ -87,13 +84,17 @@ func (prj *Project) Name(in *Project) string {
 	if in == nil {
 		return filepath.Base(prj.Dir)
 	}
-	return in.RelPath(prj.Dir)
+	n, _ := in.RelPath(prj.Dir)
+	return n
 }
 
 func (prj *Project) String() string {
 	tmp := prj.Dir
 	if tmp == "" || tmp == "." {
-		tmp, _ = filepath.Abs(tmp) // TODO error
+		var err error
+		if tmp, err = os.Getwd(); err != nil {
+			return fmt.Sprintf("<error:%s>", err)
+		}
 	}
 	return filepath.Base(tmp)
 }
@@ -116,29 +117,40 @@ func (prj *Project) StateAt(in *Project) time.Time {
 	return t
 }
 
-func (prj *Project) RelPath(p string) string {
-	dir := prj.Dir
-	if prj.parent != nil {
-		dir = prj.parent.RelPath(dir)
+func (prj *Project) AbsPath(p string) (string, error) {
+	if filepath.IsAbs(prj.Dir) {
+		return filepath.Join(prj.Dir, p), nil
 	}
-	var (
-		tmp string
-		err error
-	)
-	if dir == "" {
-		tmp, err = filepath.Rel(".", p)
-	} else {
-		tmp, err = filepath.Rel(dir, p)
+	if prj.parent == nil {
+		dir, err := filepath.Abs(prj.Dir)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, p), nil
 	}
+	pdir, err := prj.parent.AbsPath("")
 	if err != nil {
-		return filepath.Clean(p)
+		return "", err
 	}
-	return tmp
+	return filepath.Clean(filepath.Join(pdir, prj.Dir, p)), nil
+}
+
+func (prj *Project) RelPath(p string) (dir string, err error) {
+	if p == "" || p == "." {
+		return ".", nil
+	}
+	if !filepath.IsAbs(p) {
+		return filepath.Clean(p), nil
+	}
+	if dir, err = prj.AbsPath(""); err != nil {
+		return "", err
+	}
+	return filepath.Rel(dir, p)
 }
 
 func (prj *Project) Leafs() (ls []*Goal) {
 	for _, g := range prj.goals {
-		if len(g.PremiseOf) == 0 {
+		if len(g.PremiseOf()) == 0 {
 			ls = append(ls, g)
 		}
 	}
@@ -147,7 +159,7 @@ func (prj *Project) Leafs() (ls []*Goal) {
 
 func (prj *Project) Roots() (rs []*Goal) {
 	for _, g := range prj.goals {
-		if len(g.ResultOf) == 0 {
+		if len(g.ResultOf()) == 0 {
 			rs = append(rs, g)
 		}
 	}
@@ -172,10 +184,10 @@ func (prj *Project) NewAction(premises, results []*Goal, op Operation) (*Action,
 		results:  results,
 	}
 	for _, p := range premises {
-		p.PremiseOf = append(p.PremiseOf, a)
+		p.premiseOf = append(p.premiseOf, a)
 	}
 	for _, r := range results {
-		r.ResultOf = append(r.ResultOf, a)
+		r.resultOf = append(r.resultOf, a)
 	}
 	if err := updateConsistency(results); err != nil {
 		return nil, err
@@ -188,94 +200,6 @@ func (prj *Project) LockBuild() BuildID {
 	prj.Lock()
 	prj.lastBuild++
 	return prj.lastBuild
-}
-
-func escDotID(id string) string {
-	return strings.ReplaceAll(id, "\"", "\\\"")
-}
-
-func (prj *Project) WriteDot(w io.Writer) (n int, err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			switch p := p.(type) {
-			case error:
-				err = p
-			default:
-				panic(p)
-			}
-		}
-	}()
-	akku := func(p int, err error) {
-		n += p
-		if err != nil {
-			panic(err)
-		}
-	}
-	akku(fmt.Fprintf(w, "digraph \"%s\" {\n\trankdir=\"LR\"\n", escDotID(prj.Name(nil))))
-	for n, g := range prj.goals {
-		tn := reflect.Indirect(reflect.ValueOf(g.Artefact)).Type().Name()
-		var updMode string
-		if len(g.ResultOf) > 1 {
-			switch g.UpdateMode.Actions() {
-			case UpdOneAction:
-				updMode = " 1"
-			case UpdAnyAction:
-				updMode = " ?"
-			case UpdSomeActions:
-				updMode = " +"
-			case UpdAllActions:
-				updMode = " *"
-			}
-		}
-		var style string
-		if _, ok := g.Artefact.(Abstract); ok {
-			if len(g.ResultOf) == 0 || len(g.PremiseOf) == 0 {
-				style = ",style=\"dashed,bold\""
-			} else {
-				style = ",style=dashed"
-			}
-		} else if len(g.ResultOf) == 0 || len(g.PremiseOf) == 0 {
-			style = ",style=bold"
-		}
-		akku(fmt.Fprintf(w, "\t\"%p\" [shape=record%s,label=\"{%s%s|%s}\"];\n",
-			g,
-			style,
-			tn,
-			updMode,
-			escDotID(n),
-		))
-		for i, a := range g.ResultOf {
-			if a.Op == nil {
-				akku(fmt.Fprintf(w, "\t\"%p\" [shape=none,label=\"implicit\"];\n",
-					a,
-				))
-			} else if len(a.premises) == 0 {
-				akku(fmt.Fprintf(w,
-					"\t\"%p\" [shape=box,style=\"rounded,bold\",label=\"%s\"];\n",
-					a,
-					escDotID(a.String()),
-				))
-			} else {
-				akku(fmt.Fprintf(w,
-					"\t\"%p\" [shape=box,style=rounded,label=\"%s\"];\n",
-					a,
-					escDotID(a.String()),
-				))
-			}
-			var lb string
-			if g.UpdateMode.Ordered() {
-				lb = fmt.Sprintf(" [label=%d]", i+1)
-			}
-			akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\"%s;\n", a, g, lb))
-		}
-	}
-	for _, act := range prj.actions {
-		for _, p := range act.premises {
-			akku(fmt.Fprintf(w, "\t\"%p\" -> \"%p\";\n", p, act))
-		}
-	}
-	akku(fmt.Fprintln(w, "}"))
-	return
 }
 
 func (prj *Project) consistentPrj(premises, results []*Goal) error {
