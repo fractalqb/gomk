@@ -7,13 +7,15 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+
+	"git.fractalqb.de/fractalqb/gomk/gomkore"
 )
 
 type Diagrammer struct {
 	RankDir string
 }
 
-func (dia *Diagrammer) WriteDot(w io.Writer, prj *Project) (err error) {
+func (dia *Diagrammer) WriteDot(w io.Writer, prj *gomkore.Project) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			switch p := p.(type) {
@@ -38,7 +40,7 @@ func (dia *Diagrammer) WriteDot(w io.Writer, prj *Project) (err error) {
 	return nil
 }
 
-func (dia *Diagrammer) startDot(w io.Writer, prj *Project) {
+func (dia *Diagrammer) startDot(w io.Writer, prj *gomkore.Project) {
 	fmt.Fprintf(w, "digraph \"%s\" {\n", escDotID(prj.Name(nil)))
 	if dia.RankDir != "" {
 		fmt.Fprintf(w, "\trankdir=\"%s\"\n", escDotID(dia.RankDir))
@@ -49,7 +51,7 @@ func (dia *Diagrammer) endDot(w io.Writer) {
 	fmt.Fprintln(w, "}")
 }
 
-func (dia *Diagrammer) goal(w io.Writer, g *Goal) {
+func (dia *Diagrammer) goal(w io.Writer, g *gomkore.Goal) {
 	var style string
 	if g.IsAbstract() {
 		if len(g.ResultOf()) == 0 || len(g.PremiseOf()) == 0 {
@@ -92,8 +94,8 @@ func (dia *Diagrammer) goal(w io.Writer, g *Goal) {
 	)
 }
 
-func (dia *Diagrammer) action(w io.Writer, a *Action) {
-	toRes := func(res *Goal, implicit bool) {
+func (dia *Diagrammer) action(w io.Writer, a *gomkore.Action) {
+	toRes := func(res *gomkore.Goal, implicit bool) {
 		if res.UpdateMode.Ordered() {
 			i := slices.Index(res.ResultOf(), a)
 			if implicit {

@@ -2,10 +2,11 @@ package gomk
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"strings"
 	"testing"
+
+	"git.fractalqb.de/fractalqb/gomk/gomkore"
 )
 
 func TestPipe(t *testing.T) {
@@ -14,13 +15,13 @@ func TestPipe(t *testing.T) {
 		CmdOp{Exe: "sort"},
 	}
 	var out strings.Builder
-	env := Env{
+	env := gomkore.Env{
 		In:  strings.NewReader("1234\n4711\n"),
 		Out: &out,
 		Err: os.Stderr,
-		Log: slog.Default(),
 	}
-	err := pipe.Do(context.Background(), nil, &env)
+	tr := gomkore.NewTrace(context.Background(), TestTracer{t})
+	err := pipe.Do(tr, nil, &env)
 	if err != nil {
 		t.Error(err)
 	}

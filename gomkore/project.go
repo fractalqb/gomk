@@ -17,7 +17,7 @@ type Project struct {
 	sync.Mutex
 
 	parent    *Project
-	goals     map[string]*Goal
+	goals     map[string]*Goal // TODO use key that respect Artefact type correctly
 	actions   []*Action
 	lastBuild BuildID
 }
@@ -99,40 +99,44 @@ func (prj *Project) String() string {
 	return filepath.Base(tmp)
 }
 
-func (prj *Project) StateAt(in *Project) time.Time {
+func (prj *Project) StateAt(in *Project) (time.Time, error) {
 	if in == nil {
 		in = prj
 	}
 	leafs := prj.Leafs()
 	if len(leafs) == 0 {
-		return time.Time{}
+		return time.Time{}, nil
 	}
-	t := leafs[0].Artefact.StateAt(in)
+	t, err := leafs[0].Artefact.StateAt(in)
+	if err != nil {
+		return time.Time{}, err
+	}
 	for _, l := range leafs[1:] {
-		u := l.Artefact.StateAt(in)
-		if u.After(t) {
+		if u, err := l.Artefact.StateAt(in); err != nil {
+			return u, err
+		} else if u.After(t) {
 			t = u
 		}
 	}
-	return t
+	return t, nil
 }
 
-func (prj *Project) AbsPath(p string) (string, error) {
+func (prj *Project) AbsPath(rel string) (string, error) {
 	if filepath.IsAbs(prj.Dir) {
-		return filepath.Join(prj.Dir, p), nil
+		return filepath.Join(prj.Dir, rel), nil
 	}
 	if prj.parent == nil {
 		dir, err := filepath.Abs(prj.Dir)
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(dir, p), nil
+		return filepath.Join(dir, rel), nil
 	}
 	pdir, err := prj.parent.AbsPath("")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Clean(filepath.Join(pdir, prj.Dir, p)), nil
+	return filepath.Clean(filepath.Join(pdir, prj.Dir, rel)), nil
 }
 
 func (prj *Project) RelPath(p string) (dir string, err error) {
@@ -146,6 +150,20 @@ func (prj *Project) RelPath(p string) (dir string, err error) {
 		return "", err
 	}
 	return filepath.Rel(dir, p)
+}
+
+func (prj *Project) RelPathTo(base, relTarget string) (string, error) {
+	var err error
+	if !filepath.IsAbs(base) {
+		base, err = filepath.Abs(base)
+		if err != nil {
+			return "", err
+		}
+	}
+	if relTarget, err = prj.AbsPath(relTarget); err != nil {
+		return "", err
+	}
+	return filepath.Rel(base, relTarget)
 }
 
 func (prj *Project) Leafs() (ls []*Goal) {
@@ -201,6 +219,8 @@ func (prj *Project) LockBuild() BuildID {
 	prj.lastBuild++
 	return prj.lastBuild
 }
+
+func (prj *Project) Build() BuildID { return prj.lastBuild }
 
 func (prj *Project) consistentPrj(premises, results []*Goal) error {
 	for _, g := range premises {

@@ -1,7 +1,6 @@
 package gomk
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"hash"
@@ -9,23 +8,10 @@ import (
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
 )
 
-type (
-	Env     = gomkore.Env
-	Project = gomkore.Project
-	Goal    = gomkore.Goal
-	Action  = gomkore.Action
-
-	Abstract = gomkore.Abstract
-)
-
-func DefaultEnv() *Env { return gomkore.DefaultEnv() }
-
-func NewProject(dir string) *Project { return gomkore.NewProject(dir) }
-
 // Edit calls do with wrappers of [gomkore] types that allow easy editing of
 // project definitions. Edit recovers from any panic and returns it as an error,
 // so the idiomatic error handling within do can be skipped.
-func Edit(prj *Project, do func(ProjectEd)) (err error) {
+func Edit(prj *gomkore.Project, do func(ProjectEd)) (err error) {
 	prj.Lock()
 	defer func() {
 		prj.Unlock()
@@ -57,9 +43,9 @@ const (
 // linked goals gs.
 //
 // See also [Tangible], [AType]
-func Goals(gs []*Goal, exclusive bool, matchAll ...func(*Goal) bool) ([]*Goal, error) {
+func Goals(gs []*gomkore.Goal, exclusive bool, matchAll ...func(*gomkore.Goal) bool) ([]*gomkore.Goal, error) {
 	mLen1 := len(matchAll) - 1
-	res := make([]*Goal, 0, len(gs))
+	res := make([]*gomkore.Goal, 0, len(gs))
 NEXT_GOAL:
 	for gi, g := range gs {
 		for pi, pred := range matchAll {
@@ -75,32 +61,32 @@ NEXT_GOAL:
 	return res, nil
 }
 
-func Tangible(g *Goal) bool { return !g.IsAbstract() }
+func Tangible(g *gomkore.Goal) bool { return !g.IsAbstract() }
 
-func AType[A gomkore.Artefact](g *Goal) bool {
+func AType[A gomkore.Artefact](g *gomkore.Goal) bool {
 	_, ok := g.Artefact.(A)
 	return ok
 }
 
-func OpFunc(desc string, f func(context.Context, *Action, *Env) error) gomkore.Operation {
+func OpFunc(desc string, f func(*gomkore.Trace, *gomkore.Action, *gomkore.Env) error) gomkore.Operation {
 	return funcOp{desc: desc, f: f}
 }
 
 type funcOp struct {
 	desc string
-	f    func(context.Context, *Action, *Env) error
+	f    func(*gomkore.Trace, *gomkore.Action, *gomkore.Env) error
 }
 
-func (fo funcOp) Describe(*Action, *Env) string {
+func (fo funcOp) Describe(*gomkore.Action, *gomkore.Env) string {
 	return fo.desc
 }
 
-func (fo funcOp) Do(ctx context.Context, a *Action, env *Env) error {
-	env.Log.Debug("call `function`", `function`, fo.desc)
-	return fo.f(ctx, a, env)
+func (fo funcOp) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env) error {
+	tr.Debug("call `function`", `function`, fo.desc)
+	return fo.f(tr, a, env)
 }
 
-func (fo funcOp) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+func (fo funcOp) WriteHash(hash.Hash, *gomkore.Action, *gomkore.Env) (bool, error) {
 	return false, nil
 }
 

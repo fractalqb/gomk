@@ -20,19 +20,19 @@ func (d DirPath) Name(in *gomkore.Project) string {
 	return n
 }
 
-func (d DirPath) StateAt(in *gomkore.Project) time.Time {
+func (d DirPath) StateAt(in *gomkore.Project) (time.Time, error) {
 	if d.NoStat {
-		return time.Time{}
+		return time.Time{}, nil
 	}
 	prjDir, err := in.AbsPath(d.Path())
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, err
 	}
 	st, err := os.Stat(prjDir)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, err
 	}
-	return st.ModTime()
+	return st.ModTime(), nil
 }
 
 func (d DirPath) Path() string { return d.Dir }

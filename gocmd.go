@@ -1,7 +1,6 @@
 package gomk
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"hash"
@@ -24,7 +23,7 @@ func (t *GoTool) goExe() (string, error) {
 	return exec.LookPath("go")
 }
 
-func (t *GoTool) describe(base string, a *Action) string {
+func (t *GoTool) describe(base string, a *gomkore.Action) string {
 	if a == nil || len(a.Results()) == 0 {
 		return "Go " + base
 	}
@@ -48,11 +47,11 @@ type GoBuild struct {
 
 var _ gomkore.Operation = (*GoBuild)(nil)
 
-func (gb *GoBuild) Describe(a *Action, _ *Env) string {
+func (gb *GoBuild) Describe(a *gomkore.Action, _ *gomkore.Env) string {
 	return gb.describe("build", a)
 }
 
-func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
+func (gb *GoBuild) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env) error {
 	res, _ := Goals(a.Results(), false, Tangible)
 	if len(res) > 1 {
 		var sb strings.Builder
@@ -110,10 +109,10 @@ func (gb *GoBuild) Do(ctx context.Context, a *Action, env *Env) error {
 		}
 		op.Args = append(op.Args, "./"+dir)
 	}
-	return op.Do(ctx, a, env)
+	return op.Do(tr, a, env)
 }
 
-func (*GoBuild) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+func (*GoBuild) WriteHash(hash.Hash, *gomkore.Action, *gomkore.Env) (bool, error) {
 	return false, errors.New("NYI: GoBuild.WriteHash()")
 }
 
@@ -125,11 +124,11 @@ type GoTest struct {
 
 var _ gomkore.Operation = (*GoTest)(nil)
 
-func (gt *GoTest) Describe(a *Action, _ *Env) string {
+func (gt *GoTest) Describe(a *gomkore.Action, _ *gomkore.Env) string {
 	return gt.describe("test", a)
 }
 
-func (gt *GoTest) Do(ctx context.Context, a *Action, env *Env) error {
+func (gt *GoTest) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env) error {
 	var err error
 	goTool, err := gt.goExe()
 	if err != nil {
@@ -145,10 +144,10 @@ func (gt *GoTest) Do(ctx context.Context, a *Action, env *Env) error {
 	if len(gt.Pkgs) > 0 {
 		op.Args = append(op.Args, gt.Pkgs...)
 	}
-	return op.Do(ctx, a, env)
+	return op.Do(tr, a, env)
 }
 
-func (*GoTest) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+func (*GoTest) WriteHash(hash.Hash, *gomkore.Action, *gomkore.Env) (bool, error) {
 	return false, errors.New("NYI: GoTest.WriteHash()")
 }
 
@@ -162,11 +161,11 @@ type GoGenerate struct {
 
 var _ gomkore.Operation = (*GoGenerate)(nil)
 
-func (gg *GoGenerate) Describe(a *Action, _ *Env) string {
+func (gg *GoGenerate) Describe(a *gomkore.Action, _ *gomkore.Env) string {
 	return gg.describe("generate", a)
 }
 
-func (gg *GoGenerate) Do(ctx context.Context, a *Action, env *Env) error {
+func (gg *GoGenerate) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env) error {
 	var err error
 	goTool, err := gg.goExe()
 	if err != nil {
@@ -191,10 +190,10 @@ func (gg *GoGenerate) Do(ctx context.Context, a *Action, env *Env) error {
 	if len(gg.FilesPkgs) > 0 {
 		op.Args = append(op.Args, gg.FilesPkgs...)
 	}
-	return op.Do(ctx, a, env)
+	return op.Do(tr, a, env)
 }
 
-func (*GoGenerate) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+func (*GoGenerate) WriteHash(hash.Hash, *gomkore.Action, *gomkore.Env) (bool, error) {
 	return false, errors.New("NYI: GoGenerate.WriteHash()")
 }
 
@@ -208,11 +207,11 @@ type GoRun struct {
 
 var _ gomkore.Operation = (*GoRun)(nil)
 
-func (gr *GoRun) Describe(a *Action, _ *Env) string {
+func (gr *GoRun) Describe(a *gomkore.Action, _ *gomkore.Env) string {
 	return gr.describe("run", a)
 }
 
-func (gr *GoRun) Do(ctx context.Context, a *Action, env *Env) error {
+func (gr *GoRun) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env) error {
 	var err error
 	if gr.Pkg == "" {
 		return errors.New("go run without package")
@@ -236,9 +235,9 @@ func (gr *GoRun) Do(ctx context.Context, a *Action, env *Env) error {
 	}
 	op.Args = append(op.Args, gr.Pkg)
 	op.Args = append(op.Args, gr.Args...)
-	return op.Do(ctx, a, env)
+	return op.Do(tr, a, env)
 }
 
-func (*GoRun) WriteHash(hash.Hash, *Action, *Env) (bool, error) {
+func (*GoRun) WriteHash(hash.Hash, *gomkore.Action, *gomkore.Env) (bool, error) {
 	return false, errors.New("NYI: GoRun.WriteHash()")
 }

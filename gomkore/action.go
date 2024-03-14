@@ -1,7 +1,6 @@
 package gomkore
 
 import (
-	"context"
 	"hash"
 	"sync/atomic"
 )
@@ -9,7 +8,7 @@ import (
 type Operation interface {
 	// The hints are optional
 	Describe(actionHint *Action, envHint *Env) string
-	Do(ctx context.Context, a *Action, env *Env) error
+	Do(tr *Trace, a *Action, env *Env) error
 	WriteHash(h hash.Hash, a *Action, env *Env) (bool, error)
 }
 
@@ -38,30 +37,26 @@ func (a *Action) Result(i int) *Goal  { return a.results[i] }
 func (a *Action) LastBuild() BuildID { return a.lastBID }
 
 // Must not run concurrently, see [Goal.LockPreActions] and [tryLock]
-func (a *Action) Run(bid BuildID, env *Env) (BuildID, error) {
-	return a.RunContext(context.Background(), bid, env)
-}
-
-// Must not run concurrently, see [Goal.LockPreActions] and [tryLock]
-func (a *Action) RunContext(ctx context.Context, bid BuildID, env *Env) (BuildID, error) {
+func (a *Action) Run(tr *Trace, bid BuildID, env *Env) (BuildID, error) {
 	if bid <= a.lastBID {
 		return a.lastBID, nil
 	}
-	env.Log.Debug("run `action`", `action`, a.String())
 	a.lastBID = bid
+	if env == nil {
+		env = DefaultEnv(tr)
+	}
 	if a.Op == nil {
+		tr.runImplicitAction(a)
 		return 0, nil
 	}
-	if env == nil {
-		env = DefaultEnv()
-	}
-	err := a.Op.Do(ctx, a, env)
+	tr.runAction(a)
+	err := a.Op.Do(tr, a, env)
 	switch {
 	case err == nil:
 		return 0, nil
 	case a.IgnoreError:
-		env.Log.Warn("ignoring `action` `error`",
-			`action`, a.String(),
+		tr.Warn("ignoring `action` `error`",
+			`action`, a,
 			`error`, err,
 		)
 		return 0, nil
@@ -72,9 +67,9 @@ func (a *Action) RunContext(ctx context.Context, bid BuildID, env *Env) (BuildID
 func (a *Action) String() string {
 	switch {
 	case a == nil:
-		return "<nil:Action>/" + a.Project().Name(nil)
+		return "<nil:action>/" + a.Project().Name(nil)
 	case a.Op == nil:
-		return "implicit:" + a.Project().Name(nil)
+		return "<implicit>/" + a.Project().Name(nil)
 	}
 	return a.Op.Describe(a, nil)
 }

@@ -1,16 +1,13 @@
-package gomk
+package gomkore
 
 import (
-	"context"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"slices"
-	"strings"
 	"unsafe"
-
-	"git.fractalqb.de/fractalqb/gomk/gomkore"
 )
 
 type updater struct {
@@ -18,33 +15,31 @@ type updater struct {
 	LogDir    string
 	MkDirMode fs.FileMode
 
-	bid       gomkore.BuildID // => updater must not be used concurrently
-	goalIDSeq uint64
+	bid BuildID // => updater must not be used concurrently
 }
 
-func (up *updater) updateGoal(ctx context.Context, g *Goal) (bool, error) {
+func (up *updater) updateGoal(tr *Trace, g *Goal) (bool, error) {
 	gid := uintptr(unsafe.Pointer(g))
 	g.LockPreActions(gid)
 	defer g.UnlockPreActions()
 
-	chgs := g.CheckPreTimes()
+	chgs, err := g.CheckPreTimes(tr)
+	if err != nil {
+		return false, err
+	}
 	if len(chgs) == 0 {
-		up.Env.Log.Info("`goal` already up-to-date", `goal`, g.String())
+		tr.goalUpToDate(g)
 		return false, nil
 	}
-	up.Env.Log.Info("`goal` `requires` actions",
-		`goal`, g.String(),
-		`requires`, len(chgs),
-	)
+	tr.goalNeedsActions(g, len(chgs))
 
-	var err error
 	switch g.UpdateMode.Actions() {
 	case UpdAllActions:
-		err = up.updateAll(ctx, g, chgs)
+		err = up.updateAll(tr, g, chgs)
 	case UpdSomeActions:
-		err = up.updateSome(ctx, g, chgs)
+		err = up.updateSome(tr, g, chgs)
 	case UpdAnyAction:
-		err = up.updateAny(ctx, g, chgs)
+		err = up.updateAny(tr, g, chgs)
 	case UpdOneAction:
 		if l := len(chgs); l > 1 {
 			err = fmt.Errorf("%d change actions for update mode One in goal %s",
@@ -52,7 +47,7 @@ func (up *updater) updateGoal(ctx context.Context, g *Goal) (bool, error) {
 				g.String(),
 			)
 		} else {
-			err = up.updateOne(ctx, g, chgs[0])
+			err = up.updateOne(tr, g, chgs[0])
 		}
 	default:
 		err = fmt.Errorf("illegal update mode actions: %d", g.UpdateMode.Actions())
@@ -60,10 +55,38 @@ func (up *updater) updateGoal(ctx context.Context, g *Goal) (bool, error) {
 	return true, err
 }
 
-func (up *updater) updateAll(ctx context.Context, g *Goal, _ []int) error {
+func (up *updater) trEnv(tr *Trace) *Env {
+	e := up.Env.Sub()
+	var pre bytes.Buffer
+	fmt.Fprintf(&pre, "%d@%s Out: ", tr.Build(), tr.TopTag())
+	e.Out = NewPrefixWriter(e.Out, bytes.Clone(pre.Bytes()))
+	pre.Reset()
+	fmt.Fprintf(&pre, "%d@%s Err: ", tr.Build(), tr.TopTag())
+	e.Err = NewPrefixWriter(e.Err, pre.Bytes())
+	return e
+}
+
+func (up *updater) updateAll(tr *Trace, g *Goal, _ []int) error {
+	env := up.trEnv(tr)
+	switch len(g.ResultOf()) {
+	case 0:
+		return nil
+	case 1:
+		act := g.PreAction(0)
+		preBID, err := act.Run(tr, up.bid, env)
+		if err != nil {
+			return err
+		} else if preBID > up.bid {
+			return fmt.Errorf("action %s already run by younger build %d",
+				act,
+				preBID,
+			)
+		}
+		return nil
+	}
 	if g.UpdateMode.Ordered() {
 		for _, act := range g.ResultOf() {
-			if preBID, err := act.RunContext(ctx, up.bid, up.Env); err != nil {
+			if preBID, err := act.Run(tr, up.bid, env); err != nil {
 				return err
 			} else if preBID == up.bid {
 				return fmt.Errorf("action %s potentially ran out of order", act)
@@ -76,7 +99,7 @@ func (up *updater) updateAll(ctx context.Context, g *Goal, _ []int) error {
 		}
 	} else {
 		for _, act := range g.ResultOf() {
-			if preBID, err := act.RunContext(ctx, up.bid, up.Env); err != nil {
+			if preBID, err := act.Run(tr, up.bid, env); err != nil {
 				return err
 			} else if preBID > up.bid {
 				return fmt.Errorf("action %s already run by younger build %d",
@@ -89,11 +112,12 @@ func (up *updater) updateAll(ctx context.Context, g *Goal, _ []int) error {
 	return nil
 }
 
-func (up *updater) updateSome(ctx context.Context, g *Goal, chgs []int) error {
+func (up *updater) updateSome(tr *Trace, g *Goal, chgs []int) error {
+	env := up.trEnv(tr)
 	if len(chgs) > 1 && g.UpdateMode.Ordered() {
 		for _, idx := range chgs {
 			act := g.PreAction(idx)
-			if preBID, err := act.RunContext(ctx, up.bid, up.Env); err != nil {
+			if preBID, err := act.Run(tr, up.bid, env); err != nil {
 				return err
 			} else if preBID == up.bid {
 				return fmt.Errorf("action %s potentially ran out of order", act)
@@ -107,7 +131,7 @@ func (up *updater) updateSome(ctx context.Context, g *Goal, chgs []int) error {
 	} else {
 		for _, idx := range chgs {
 			act := g.PreAction(idx)
-			if preBID, err := act.RunContext(ctx, up.bid, up.Env); err != nil {
+			if preBID, err := act.Run(tr, up.bid, env); err != nil {
 				return err
 			} else if preBID > up.bid {
 				return fmt.Errorf("action %s already run by younger build %d",
@@ -121,7 +145,7 @@ func (up *updater) updateSome(ctx context.Context, g *Goal, chgs []int) error {
 
 }
 
-func (up *updater) updateAny(ctx context.Context, g *Goal, chgs []int) error {
+func (up *updater) updateAny(tr *Trace, g *Goal, chgs []int) error {
 	done := -1
 	for i, act := range g.ResultOf() {
 		preBID := act.LastBuild()
@@ -150,11 +174,12 @@ func (up *updater) updateAny(ctx context.Context, g *Goal, chgs []int) error {
 	if done >= 0 {
 		return nil
 	}
-	_, err := g.PreAction(chgs[0]).RunContext(ctx, up.bid, up.Env)
+	env := up.trEnv(tr)
+	_, err := g.PreAction(chgs[0]).Run(tr, up.bid, env)
 	return err
 }
 
-func (up *updater) updateOne(ctx context.Context, g *Goal, chg int) error {
+func (up *updater) updateOne(tr *Trace, g *Goal, chg int) error {
 	for i, act := range g.ResultOf() {
 		preBID := act.LastBuild()
 		switch {
@@ -174,7 +199,8 @@ func (up *updater) updateOne(ctx context.Context, g *Goal, chg int) error {
 			}
 		}
 	}
-	_, err := g.PreAction(chg).RunContext(ctx, up.bid, up.Env)
+	env := up.trEnv(tr)
+	_, err := g.PreAction(chg).Run(tr, up.bid, env)
 	return err
 }
 
@@ -200,32 +226,4 @@ func (w stackedWriter) Close() error {
 		return c.Close()
 	}
 	return nil
-}
-
-type trace struct {
-	p  *trace
-	id gomkore.BuildID
-}
-
-func startTrace(id gomkore.BuildID) *trace { return &trace{id: id} }
-
-func (t *trace) push(id gomkore.BuildID) *trace { return &trace{p: t, id: id} }
-
-// func (t *trace) pop() *trace { return t.p }
-
-// must t != nil
-func (t *trace) String() string {
-	var sb strings.Builder
-	if t.p != nil {
-		fmt.Fprint(&sb, t.id)
-		for t = t.p; t.p != nil; t = t.p {
-			fmt.Fprintf(&sb, ">%d", t.id)
-		}
-	}
-	fmt.Fprintf(&sb, "@%d", t.id)
-	return sb.String()
-}
-
-func (bd *Builder) Describe(*Action, *Env) string {
-	return "Build project" // TODO better description
 }

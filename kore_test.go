@@ -9,10 +9,10 @@ import (
 )
 
 func TestGoals(t *testing.T) {
-	prj := NewProject(t.Name())
+	prj := gomkore.NewProject(t.Name())
 	g1 := testerr.F1(prj.Goal(gomkore.Abstract("."))).ShouldBeNil(t)
 	g2 := testerr.F1(prj.Goal(mkfs.File("F"))).ShouldBeNil(t)
-	gs := []*Goal{g1, g2}
+	gs := []*gomkore.Goal{g1, g2}
 
 	t.Run("not exclusive", func(t *testing.T) {
 		res := testerr.F1(Goals(gs, false, Tangible, AType[mkfs.File])).ShallBeNil(t)

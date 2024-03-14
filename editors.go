@@ -8,9 +8,9 @@ import (
 )
 
 // ProjectEd is used with [Edit].
-type ProjectEd struct{ p *Project }
+type ProjectEd struct{ p *gomkore.Project }
 
-func (ed ProjectEd) Project() *Project { return ed.p }
+func (ed ProjectEd) Project() *gomkore.Project { return ed.p }
 
 func (ed ProjectEd) NewAction(premises, results []GoalEd, op gomkore.Operation) ActionEd {
 	prems, ress := goals(premises), goals(results)
@@ -48,39 +48,43 @@ func (ed ProjectEd) FsExists(a mkfs.Artefact) bool {
 }
 
 // GoalEd is used with [Edit].
-type GoalEd struct{ g *Goal }
+type GoalEd struct{ g *gomkore.Goal }
 
-func (ed GoalEd) Goal() *Goal { return ed.g }
+func (ed GoalEd) Goal() *gomkore.Goal { return ed.g }
 
 func (ed GoalEd) Project() ProjectEd { return ProjectEd{ed.g.Project()} }
 
 func (ed GoalEd) UpdateMode() gomkore.UpdateMode     { return ed.g.UpdateMode }
 func (ed GoalEd) SetUpdateMode(m gomkore.UpdateMode) { ed.g.UpdateMode = m }
 
+func (ed GoalEd) Removable() bool        { return ed.g.Removable }
+func (ed GoalEd) SetRemovable(flag bool) { ed.g.Removable = flag }
+
 func (ed GoalEd) Artefact() gomkore.Artefact { return ed.g.Artefact }
 
 func (ed GoalEd) IsAbstract() bool { return ed.g.IsAbstract() }
 
-func (result GoalEd) By(op gomkore.Operation, premises ...GoalEd) GoalEd {
+func (result GoalEd) By(op gomkore.Operation, premises ...GoalEd) (GoalEd, ActionEd) {
 	prj := result.g.Project()
 	prems := goals(premises)
-	results := []*Goal{result.g}
-	if _, err := prj.NewAction(prems, results, op); err != nil {
+	results := []*gomkore.Goal{result.g}
+	act, err := prj.NewAction(prems, results, op)
+	if err != nil {
 		panic(err)
 	}
-	return result
+	return result, ActionEd{act}
 }
 
 func (ed GoalEd) ImpliedBy(premises ...GoalEd) GoalEd {
 	prj := ed.g.Project()
-	if _, err := prj.NewAction(goals(premises), []*Goal{ed.g}, nil); err != nil {
+	if _, err := prj.NewAction(goals(premises), []*gomkore.Goal{ed.g}, nil); err != nil {
 		panic(err)
 	}
 	return ed
 }
 
-func goals(gs []GoalEd) []*Goal {
-	var gls []*Goal
+func goals(gs []GoalEd) []*gomkore.Goal {
+	var gls []*gomkore.Goal
 	if l := len(gs); l > 0 {
 		gls = make([]*gomkore.Goal, l)
 		for i, p := range gs {
@@ -93,7 +97,7 @@ func goals(gs []GoalEd) []*Goal {
 // ActionEd is used with [Edit].
 type ActionEd struct{ a *gomkore.Action }
 
-func (ed ActionEd) Action() *Action { return ed.a }
+func (ed ActionEd) Action() *gomkore.Action { return ed.a }
 
 func (ed ActionEd) Project() ProjectEd {
 	return ProjectEd{ed.a.Project()}

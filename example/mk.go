@@ -2,15 +2,16 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"log"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"git.fractalqb.de/fractalqb/eloc/must"
 	"git.fractalqb.de/fractalqb/gomk"
+	"git.fractalqb.de/fractalqb/gomk/gomkore"
 	"git.fractalqb.de/fractalqb/gomk/mkfs"
-	"git.fractalqb.de/fractalqb/qblog"
 )
 
 var (
@@ -20,36 +21,39 @@ var (
 	// go test ./...
 	goTest = gomk.GoTest{Pkgs: []string{"./..."}}
 
-	// go build -C <result-dir> -trimpath -s -w
-	goBuild = gomk.GoBuild{TrimPath: true}
+	// go build -trimpath -s -w
+	goBuild = gomk.GoBuild{TrimPath: true, LDFlags: []string{"-s", "-w"}}
 
 	clean, dryrun bool
 	writeDot      bool
 	offline       bool
+
+	tracr = gomk.WriteTracer{W: os.Stderr, Log: gomkore.TraceDebug}
 )
 
 func flags() {
-	fLog := flag.String("log", "", "Set log level")
 	flag.BoolVar(&writeDot, "dot", writeDot, "Write graphviz file to stdout and exit")
 	flag.BoolVar(&clean, "clean", clean, "Clean project")
 	flag.BoolVar(&dryrun, "n", dryrun, "Dryrun")
 	flag.BoolVar(&offline, "offline", offline, "Skip everything that requires being online")
+	fLog := flag.String("log", "", "Set log level {off, warn, info, debug}")
 	flag.Parse()
+
 	if *fLog != "" {
-		qblog.DefaultConfig.ParseFlag(*fLog)
+		tracr.ParseLogFlag(*fLog)
 	}
 }
 
 func main() {
 	flags()
 
-	prj := gomk.NewProject("")
+	prj := gomkore.NewProject("")
 
 	must.Do(gomk.Edit(prj, func(prj gomk.ProjectEd) {
-		goalGoGen := prj.Goal(gomk.Abstract("go-gen")).
+		goalGoGen, _ := prj.Goal(gomkore.Abstract("go-gen")).
 			By(&goGenerate)
 
-		goalTest := prj.Goal(gomk.Abstract("test")).
+		goalTest, _ := prj.Goal(gomkore.Abstract("test")).
 			By(&goTest, goalGoGen)
 
 		goalPkgFoo := prj.Goal(mkfs.DirFiles("cmd/foo", "", 1)).
@@ -68,20 +72,25 @@ func main() {
 		}).
 			By(&goBuild, goalPkgFoo, goalPkgBar)
 
+		docOutDir := mkfs.DirFiles("dist/doc", "", 0)
+
 		mdSrcDir := mkfs.DirList{Dir: "doc", Filter: mkfs.NameMatch("*.md")}
 		mdGoals := gomk.FsGoals(prj, mdSrcDir, nil)
-
-		docOut := mkfs.DirFiles("dist/doc", "", 0)
 		goals := gomk.Convert(mdGoals,
 			gomk.OutFile{
 				Ext:   gomk.ExtMap{".md": ".html"},
 				Strip: mdSrcDir,
-				Dest:  docOut,
+				Dest:  docOutDir,
 			}.Artefact,
+			func(out gomk.GoalEd) { out.SetRemovable(true) },
 			// requires 'markdown' to be in the path
-			&gomk.ConvertCmd{Exe: "markdown", Output: "stdout"},
+			&gomk.ConvertCmd{Exe: "markdown", PassOut: "stdout"},
+			nil,
 		)
-		goalDoc := prj.Goal(gomk.Abstract("doc")).ImpliedBy(goals...)
+		for _, g := range goals {
+			g.SetRemovable(true)
+		}
+		goalDoc := prj.Goal(gomkore.Abstract("doc")).ImpliedBy(goals...)
 		goalDoc.SetUpdateMode(gomk.UpdAllActions | gomk.UpdUnordered)
 
 		pumlSrcDir := mkfs.DirList{Dir: "doc", Filter: mkfs.NameMatch("*.puml")}
@@ -90,24 +99,30 @@ func main() {
 			gomk.OutFile{
 				Ext:   gomk.ExtMap{".puml": ".png"},
 				Strip: pumlSrcDir,
-				Dest:  docOut,
+				Dest:  docOutDir,
 			}.Artefact,
+			func(out gomk.GoalEd) { out.SetRemovable(true) },
 			// requires 'plantuml' to be in the path
 			&gomk.ConvertCmd{
-				Exe: "plantuml",
-				// PlantUML takes -o relative to input, not CWD
-				Args: []string{"-o", filepath.Join("..", prj.RelPath(docOut.Path()))},
+				Exe:        "plantuml",
+				PassOut:    "-o",
+				OutRelToIn: true,
+				OutDir:     true,
 			},
+			nil,
 		)
+		for _, g := range goals {
+			g.SetRemovable(true)
+		}
 		goalDoc.ImpliedBy(goals...)
 	}))
 
+	tr := gomkore.NewTrace(context.Background(), tracr)
+
 	if clean {
-		log := qblog.New(&qblog.DefaultConfig)
-		err := gomk.Clean(prj, dryrun, log.Logger)
+		err := gomkore.Clean(prj, dryrun, tr)
 		if err != nil {
-			log.Error(err.Error())
-			os.Exit(1)
+			log.Fatal(err)
 		}
 		return
 	}
@@ -121,13 +136,13 @@ func main() {
 		return
 	}
 
-	builder := gomk.Builder{} //LogDir: "build", MkDirMode: 0777}
+	builder := gomkore.Builder{} //LogDir: "build", MkDirMode: 0777}
 	if flag.NArg() == 0 {
-		if err := builder.Project(prj); err != nil {
+		if err := builder.Project(prj, tr); err != nil {
 			slog.Error(err.Error())
 		}
 	} else {
-		if err := builder.NamedGoals(prj, flag.Args()...); err != nil {
+		if err := builder.NamedGoals(prj, tr, flag.Args()...); err != nil {
 			slog.Error(err.Error())
 		}
 	}

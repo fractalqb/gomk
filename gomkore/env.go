@@ -3,21 +3,14 @@ package gomkore
 import (
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
 	"os"
 	"strings"
-
-	"git.fractalqb.de/fractalqb/qblog"
 )
 
 type Env struct {
 	In       io.Reader
 	Out, Err io.Writer
-	// The logger used by [Actions]. The default uses
-	// git.fractalqb.de/fractalqb/qblog to get messages that are better suited
-	// to the human eye.
-	Log *slog.Logger
 
 	tags    map[string]string
 	delt    map[string]bool
@@ -26,18 +19,19 @@ type Env struct {
 	parent  *Env
 }
 
-func DefaultEnv() *Env {
+func DefaultEnv(tr *Trace) *Env {
 	env := &Env{
 		In:   os.Stdin,
 		Out:  os.Stdout,
 		Err:  os.Stderr,
-		Log:  qblog.New(&qblog.DefaultConfig).Logger,
 		tags: make(map[string]string),
 	}
 	for _, evar := range os.Environ() {
 		kv := strings.SplitN(evar, "=", 2)
 		if len(kv) == 0 || kv[0] == "" {
-			env.Log.Warn("ignoring default `env`", `env`, evar)
+			if tr != nil {
+				tr.Warn("ignoring default `env`", `env`, evar)
+			}
 			continue
 		}
 		switch len(kv) {
@@ -53,7 +47,6 @@ func DefaultEnv() *Env {
 func (e *Env) Sub() *Env {
 	return &Env{
 		In: e.In, Out: e.Out, Err: e.Err,
-		Log:    e.Log,
 		parent: e,
 	}
 }
@@ -61,7 +54,6 @@ func (e *Env) Sub() *Env {
 func (e *Env) Clone() *Env {
 	return &Env{
 		In: e.In, Out: e.Out, Err: e.Err,
-		Log:  e.Log,
 		tags: e.mergedTags(),
 	}
 }

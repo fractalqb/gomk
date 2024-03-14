@@ -1,7 +1,6 @@
 package mkfs
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"hash"
@@ -65,12 +64,7 @@ var _ gomkore.Operation = FsCopy{}
 
 func (FsCopy) Describe(*gomkore.Action, *gomkore.Env) string { return "FS copy" }
 
-func (cp FsCopy) Do(_ context.Context, a *gomkore.Action, env *gomkore.Env) (err error) {
-	defer func() {
-		if err != nil {
-			env.Log.Error(err.Error())
-		}
-	}()
+func (cp FsCopy) Do(tr *gomkore.Trace, a *gomkore.Action, _ *gomkore.Env) error {
 	var prems []Artefact
 	for _, pre := range a.Premises() {
 		switch fsa := pre.Artefact.(type) {
@@ -85,11 +79,11 @@ func (cp FsCopy) Do(_ context.Context, a *gomkore.Action, env *gomkore.Env) (err
 	for _, res := range a.Results() {
 		switch res := res.Artefact.(type) {
 		case File:
-			return cp.toFile(a.Project(), res, prems, env)
+			return cp.toFile(tr, a.Project(), res, prems)
 		case Directory:
-			return cp.toDir(a.Project(), res.Path(), prems, env)
+			return cp.toDir(tr, a.Project(), res.Path(), prems)
 		case DirPath:
-			return cp.toDir(a.Project(), res.Path(), prems, env)
+			return cp.toDir(tr, a.Project(), res.Path(), prems)
 		case gomkore.Abstract:
 			// do nothing
 		default:
@@ -99,7 +93,7 @@ func (cp FsCopy) Do(_ context.Context, a *gomkore.Action, env *gomkore.Env) (err
 	return nil
 }
 
-func (cp FsCopy) toFile(prj *gomkore.Project, dst File, srcs []Artefact, env *gomkore.Env) error {
+func (cp FsCopy) toFile(tr *gomkore.Trace, prj *gomkore.Project, dst File, srcs []Artefact) error {
 	dstPath, err := prj.RelPath(dst.Path())
 	if err != nil {
 		return err
@@ -116,7 +110,7 @@ func (cp FsCopy) toFile(prj *gomkore.Project, dst File, srcs []Artefact, env *go
 		if err != nil {
 			return err
 		}
-		fsCopyFile(dstPath, src, st, env.Log)
+		fsCopyFile(tr, dstPath, src, st)
 	}
 	w, err := os.Create(dstPath)
 	if err != nil {
@@ -128,7 +122,7 @@ func (cp FsCopy) toFile(prj *gomkore.Project, dst File, srcs []Artefact, env *go
 		if err != nil {
 			return err
 		}
-		env.Log.Debug("FS copy: append `src` -> `dst`",
+		tr.Debug("FS copy: append `src` -> `dst`",
 			slog.String(`src`, srcPath),
 			slog.String(`dst`, dstPath),
 		)
@@ -147,7 +141,7 @@ func (cp FsCopy) toFile(prj *gomkore.Project, dst File, srcs []Artefact, env *go
 	return nil
 }
 
-func (cp FsCopy) toDir(prj *gomkore.Project, dst string, srcs []Artefact, env *gomkore.Env) error {
+func (cp FsCopy) toDir(tr *gomkore.Trace, prj *gomkore.Project, dst string, srcs []Artefact) error {
 	dst, err := prj.RelPath(dst) // TODO should be AbsPath
 	if err != nil {
 		return err
@@ -169,7 +163,7 @@ func (cp FsCopy) toDir(prj *gomkore.Project, dst string, srcs []Artefact, env *g
 		if st.IsDir() {
 			switch src := src.(type) {
 			case DirTree:
-				return sfCopyDir(dst, srcPath, env.Log)
+				return sfCopyDir(tr, dst, srcPath)
 			case DirList:
 				srcBase := filepath.Base(srcPath)
 				dst = filepath.Join(srcBase)
@@ -178,13 +172,13 @@ func (cp FsCopy) toDir(prj *gomkore.Project, dst string, srcs []Artefact, env *g
 						return err
 					}
 				}
-				return sfCopyDir(dst, srcPath, env.Log)
+				return sfCopyDir(tr, dst, srcPath)
 			default:
 				return fmt.Errorf("FS IsDir = true for %T", src)
 			}
 		} else {
 			bnm := filepath.Base(src.Path())
-			err = fsCopyFile(filepath.Join(dst, bnm), srcPath, st, env.Log)
+			err = fsCopyFile(tr, filepath.Join(dst, bnm), srcPath, st)
 			if err != nil {
 				return err
 			}
@@ -193,7 +187,7 @@ func (cp FsCopy) toDir(prj *gomkore.Project, dst string, srcs []Artefact, env *g
 	return nil
 }
 
-func sfCopyDir(dst, src string, log *slog.Logger) error {
+func sfCopyDir(tr *gomkore.Trace, dst, src string) error {
 	if src == dst {
 		return nil
 	}
@@ -212,7 +206,7 @@ func sfCopyDir(dst, src string, log *slog.Logger) error {
 			}
 		} else if stat, err := d.Info(); err != nil {
 			return err
-		} else if err := fsCopyFile(dpath, path, stat, log); err != nil {
+		} else if err := fsCopyFile(tr, dpath, path, stat); err != nil {
 			return err
 		}
 		return nil
@@ -220,11 +214,11 @@ func sfCopyDir(dst, src string, log *slog.Logger) error {
 	return err
 }
 
-func fsCopyFile(dst, src string, sstat fs.FileInfo, log *slog.Logger) error {
+func fsCopyFile(tr *gomkore.Trace, dst, src string, sstat fs.FileInfo) error {
 	if src == dst {
 		return nil
 	}
-	log.Debug("FS copy: `src` -> `dst`",
+	tr.Debug("FS copy: `src` -> `dst`",
 		slog.String(`src`, src),
 		slog.String(`dst`, dst),
 	)

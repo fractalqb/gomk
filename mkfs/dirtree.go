@@ -1,7 +1,10 @@
 package mkfs
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -58,12 +61,12 @@ func (d DirTree) Name(in *gomkore.Project) string {
 	return n
 }
 
-func (d DirTree) StateAt(in *gomkore.Project) (t time.Time) {
+func (d DirTree) StateAt(in *gomkore.Project) (t time.Time, err error) {
 	root, err := in.AbsPath(d.Dir)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, err
 	}
-	err = d.ls(root, func(p string, e fs.DirEntry) error {
+	err = d.ls(root, func(_ string, e fs.DirEntry) error {
 		if info, err := e.Info(); err != nil {
 			return err
 		} else if mt := info.ModTime(); mt.After(t) {
@@ -72,9 +75,37 @@ func (d DirTree) StateAt(in *gomkore.Project) (t time.Time) {
 		return nil
 	})
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, err
 	}
-	return t
+	return t, nil
+}
+
+func (d DirTree) Exists(in *gomkore.Project) (bool, error) {
+	ap, err := in.AbsPath(d.Path())
+	if err != nil {
+		return false, err
+	}
+	st, err := os.Stat(ap)
+	switch {
+	case err == nil:
+		if !st.IsDir() {
+			return true, fmt.Errorf("%s is no directory", d.Path())
+		}
+		return true, nil
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
+	}
+	return false, err
+}
+
+func (d DirTree) Remove(in *gomkore.Project) error {
+	prjDir, err := in.AbsPath(d.Dir)
+	if err != nil {
+		return err
+	}
+	return d.ls(prjDir, func(p string, _ fs.DirEntry) error {
+		return os.Remove(p)
+	})
 }
 
 func (d DirTree) Moved(strip, dest Directory) (DirTree, error) {

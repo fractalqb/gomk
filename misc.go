@@ -5,7 +5,13 @@ import (
 	"git.fractalqb.de/fractalqb/gomk/mkfs"
 )
 
-func Convert(prems []GoalEd, result func(GoalEd) gomkore.Artefact, op gomkore.Operation) (gls []GoalEd) {
+func Convert(
+	prems []GoalEd,
+	result func(GoalEd) gomkore.Artefact,
+	goalCfg func(GoalEd),
+	op gomkore.Operation,
+	actionCfg func(ActionEd),
+) (gls []GoalEd) {
 	for _, pre := range prems {
 		atf := result(pre)
 		if atf == nil {
@@ -13,7 +19,13 @@ func Convert(prems []GoalEd, result func(GoalEd) gomkore.Artefact, op gomkore.Op
 		}
 		prj := pre.Project()
 		res := prj.Goal(atf)
-		res.By(op, pre)
+		if goalCfg != nil {
+			goalCfg(res)
+		}
+		_, act := res.By(op, pre)
+		if actionCfg != nil {
+			actionCfg(act)
+		}
 		gls = append(gls, res)
 	}
 	return gls

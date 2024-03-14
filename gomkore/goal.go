@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -18,7 +19,13 @@ type Artefact interface {
 
 	// StateAs returns the time at which the artefact reached its current state.
 	// If this cannot be provided, the zero Time is returned.
-	StateAt(in *Project) time.Time
+	StateAt(in *Project) (time.Time, error)
+}
+
+type RemovableArtefact interface {
+	Artefact
+	Exists(in *Project) (bool, error)
+	Remove(in *Project) error
 }
 
 type Abstract string
@@ -27,7 +34,27 @@ var _ Artefact = Abstract("")
 
 func (a Abstract) Name(*Project) string { return string(a) }
 
-func (a Abstract) StateAt(*Project) time.Time { return time.Time{} }
+func (a Abstract) StateAt(prj *Project) (t time.Time, err error) {
+	g, err := prj.Goal(a)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, act := range g.ResultOf() {
+		if act.Op != nil {
+			return time.Time{}, nil
+		}
+	}
+	for _, act := range g.ResultOf() {
+		for _, pre := range act.Premises() {
+			if pt, err := pre.Artefact.StateAt(prj); err != nil {
+				return pt, err
+			} else if pt.After(t) {
+				t = pt
+			}
+		}
+	}
+	return t, nil
+}
 
 type UpdateMode uint
 
@@ -71,6 +98,7 @@ func (m UpdateMode) Ordered() bool       { return (m & UpdUnordered) == 0 }
 type Goal struct {
 	UpdateMode UpdateMode
 	Artefact   Artefact
+	Removable  bool
 
 	prj       *Project
 	resultOf  []*Action
@@ -103,6 +131,12 @@ func (g *Goal) IsAbstract() bool {
 
 // Requires 'involved' to really be involved
 func (g *Goal) UpdateConsistency(involved *Goal) error {
+	// TODO This has to be carefully aligned with the builder
+	//
+	// ~ A goal that has
+	// been partially build as "involved" only calls missing actions. For the
+	// time being be pessimistic!
+
 	if involved == g {
 		return nil
 	}
@@ -114,46 +148,89 @@ func (g *Goal) UpdateConsistency(involved *Goal) error {
 			return nil
 		}
 	}
-	// TODO This has to be carefully aligned with the builder:
-	// ~ A goal that has been partially build as "involved" only calls missing
-	// actions
-	// For the time being be cnservative:
-	return fmt.Errorf("update conflict of goal %s with involved goal %s",
-		g,
-		involved,
-	)
+	if len(g.ResultOf()) != len(involved.ResultOf()) {
+		return fmt.Errorf("different number of actions for goal %s and involved goal %s",
+			g,
+			involved,
+		)
+	}
+	if involved.UpdateMode.Ordered() {
+		if !g.UpdateMode.Ordered() {
+			return fmt.Errorf("update conflict of unordered goal %s with ordered involved goal %s",
+				g,
+				involved,
+			)
+		}
+		for i, ga := range g.ResultOf() {
+			if ga != involved.PreAction(i) {
+				return fmt.Errorf("different actions for goal %s and involved goal %s",
+					g,
+					involved,
+				)
+			}
+		}
+		return nil
+	}
+	if g.UpdateMode.Ordered() {
+		return fmt.Errorf("update conflict of ordered goal %s with unordered involved goal %s",
+			g,
+			involved,
+		)
+	}
+	for _, ga := range g.ResultOf() {
+		if slices.Index(involved.ResultOf(), ga) < 0 {
+			return fmt.Errorf("different actions for goal %s and involved goal %s",
+				g,
+				involved,
+			)
+		}
+	}
+	return nil
 }
 
 func (g *Goal) String() string {
 	tn := reflect.Indirect(reflect.ValueOf(g.Artefact)).Type().Name()
 	an := g.Name()
-	return fmt.Sprintf("[%s]%s", an, tn)
+	return fmt.Sprintf("%s:%s", an, tn)
 }
 
 // CheckPreTimes check if g needs to be updated according to the timestamps of
 // all of its premises.
-func (g *Goal) CheckPreTimes() (chgs []int) {
+func (g *Goal) CheckPreTimes(tr *Trace) (chgs []int, err error) {
 	// TODO Consistency for concurrent builds
-	gaTS := g.Artefact.StateAt(g.Project())
+	gaTS, err := g.Artefact.StateAt(g.Project())
+	if err != nil {
+		return nil, err
+	}
 	for actIdx, act := range g.ResultOf() {
-		if gaTS.IsZero() || len(act.Premises()) == 0 {
+		if gaTS.IsZero() {
+			tr.scheduleResTimeZero(act, g)
+			chgs = append(chgs, actIdx)
+			continue
+		} else if len(act.Premises()) == 0 {
+			tr.scheduleNotPremises(act, g)
 			chgs = append(chgs, actIdx)
 			continue
 		}
 	PREMISE_LOOP:
 		for _, pre := range act.Premises() {
-			preTS := pre.Artefact.StateAt(g.Project())
+			preTS, err := pre.Artefact.StateAt(g.Project())
+			if err != nil {
+				return nil, err
+			}
 			switch {
 			case preTS.IsZero():
+				tr.schedulePreTimeZero(act, g, pre)
 				chgs = append(chgs, actIdx)
 				break PREMISE_LOOP
 			case gaTS.Before(preTS):
+				tr.scheduleOutdated(act, g, pre)
 				chgs = append(chgs, actIdx)
 				break PREMISE_LOOP
 			}
 		}
 	}
-	return chgs
+	return chgs, nil
 }
 
 // LockBuild locks g once for the current build of g's project. If g was already
