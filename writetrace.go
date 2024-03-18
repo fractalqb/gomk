@@ -1,6 +1,7 @@
 package gomk
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,27 +12,46 @@ import (
 	"git.fractalqb.de/fractalqb/sllm/v3"
 )
 
+type TraceLevel int
+
+var DefaultTraceLevel TraceLevel = TraceLeast
+
+const (
+	TraceImportant TraceLevel = (1 << iota)
+	TraceNormal
+	TraceDetails
+
+	TraceNothing = 0
+	TraceLeast   = TraceImportant
+	TraceMedium  = TraceLeast | TraceNormal
+	TraceMost    = TraceMedium | TraceDetails
+)
+
+func (cfg TraceLevel) Traces(l TraceLevel) bool { return cfg&l == l }
+
 type WriteTracer struct {
 	W   io.Writer
-	Log gomkore.TraceLog
+	Log TraceLevel
 }
 
-func DefaultTracer() gomkore.Tracer {
-	return &WriteTracer{W: os.Stderr, Log: gomkore.TraceWarn}
+func NewDefaultTracer() *WriteTracer {
+	return &WriteTracer{W: os.Stderr, Log: TraceImportant}
 }
 
-func (tr *WriteTracer) ParseLogFlag(f string) error {
+const WriteTraceLevelFlagDoc = `Set trace level: l/least; m/medium; M/most`
+
+func (tr *WriteTracer) ParseLevelFlag(f string) error {
 	switch f {
 	case "":
 		return nil
 	case "off":
-		tr.Log = 0
-	case "warn", "w":
-		tr.Log = gomkore.TraceWarn
-	case "info", "i":
-		tr.Log = gomkore.TraceWarn | gomkore.TraceInfo
-	case "debug", "d":
-		tr.Log = gomkore.TraceWarn | gomkore.TraceInfo | gomkore.TraceDebug
+		tr.Log = TraceNothing
+	case "least", "l":
+		tr.Log = TraceLeast
+	case "medium", "m":
+		tr.Log = TraceMedium
+	case "most", "M":
+		tr.Log = TraceMost
 	default:
 		return fmt.Errorf("write tracer: illegal log flag '%s'", f)
 	}
@@ -39,166 +59,171 @@ func (tr *WriteTracer) ParseLogFlag(f string) error {
 }
 
 func (tr WriteTracer) Debug(t *gomkore.Trace, msg string, args ...any) {
-	if tr.Log&gomkore.TraceDebug == 0 {
-		return
+	if tr.Log.Traces(TraceDetails) {
+		fmt.Fprintf(tr.W, "%d@%s\t  DEBUG ", t.Build(), t.TopTag())
+		sllm.Fprint(tr.W, msg, sllmArgs(args).append)
+		fmt.Fprintln(tr.W)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t  DEBUG ", t.Build(), t.TopTag())
-	sllm.Fprint(tr.W, msg, sllmArgs(args).append)
-	fmt.Fprintln(tr.W)
 }
 
 func (tr WriteTracer) Info(t *gomkore.Trace, msg string, args ...any) {
-	if tr.Log&(gomkore.TraceInfo|gomkore.TraceDebug) == 0 {
-		return
+	if tr.Log.Traces(TraceNormal) {
+		fmt.Fprintf(tr.W, "%d@%s\t  INFO  ", t.Build(), t.TopTag())
+		sllm.Fprint(tr.W, msg, sllmArgs(args).append)
+		fmt.Fprintln(tr.W)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t  INFO  ", t.Build(), t.TopTag())
-	sllm.Fprint(tr.W, msg, sllmArgs(args).append)
-	fmt.Fprintln(tr.W)
 }
 
 func (tr WriteTracer) Warn(t *gomkore.Trace, msg string, args ...any) {
-	if tr.Log&(gomkore.TraceWarn|gomkore.TraceInfo|gomkore.TraceDebug) == 0 {
-		return
+	if tr.Log.Traces(TraceImportant) {
+		fmt.Fprintf(tr.W, "%d@%s\t  WARN  ", t.Build(), t.TopTag())
+		sllm.Fprint(tr.W, msg, sllmArgs(args).append)
+		fmt.Fprintln(tr.W)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t  WARN  ", t.Build(), t.TopTag())
-	sllm.Fprint(tr.W, msg, sllmArgs(args).append)
-	fmt.Fprintln(tr.W)
 }
 
 func (tr WriteTracer) StartProject(t *gomkore.Trace, p *gomkore.Project, activity string) {
-	fmt.Fprintf(tr.W, "%d@%s\t{ %s project '%s' in %s\n",
-		t.Build(),
-		t.TopTag(),
-		activity,
-		p,
-		p.Dir,
-	)
+	if tr.Log != 0 {
+		fmt.Fprintf(tr.W, "%d@%s\t{ %s project '%s' in %s\n",
+			t.Build(),
+			t.TopTag(),
+			activity,
+			p,
+			p.Dir,
+		)
+	}
 }
 
 func (tr WriteTracer) DoneProject(t *gomkore.Trace, p *gomkore.Project, activity string, dt time.Duration) {
-	fmt.Fprintf(tr.W, "%d@%s\t} %s project '%s' took %s\n",
-		t.Build(),
-		t.TopTag(),
-		activity,
-		p,
-		dt,
-	)
+	if tr.Log != 0 {
+		fmt.Fprintf(tr.W, "%d@%s\t} %s project '%s' took %s\n",
+			t.Build(),
+			t.TopTag(),
+			activity,
+			p,
+			dt,
+		)
+	}
 }
 
-func (tr WriteTracer) logGoals() bool {
-	return tr.Log&(gomkore.TraceWarn|gomkore.TraceInfo|gomkore.TraceDebug) != 0
+func (tr WriteTracer) SetupActionEnv(t *gomkore.Trace, env *gomkore.Env) (*gomkore.Env, error) {
+	if env.Out == nil && env.Err == nil {
+		return env, nil
+	}
+	e := env.Sub()
+	var pre bytes.Buffer
+	if e.Out != nil {
+		fmt.Fprintf(&pre, "%d@%s Out: ", t.Build(), t.TopTag())
+		e.Out = newPrefixWriter(e.Out, bytes.Clone(pre.Bytes()))
+	}
+	if e.Err != nil {
+		pre.Reset()
+		fmt.Fprintf(&pre, "%d@%s Err: ", t.Build(), t.TopTag())
+		e.Err = newPrefixWriter(e.Err, pre.Bytes())
+	}
+	return e, nil
 }
 
-func (tr WriteTracer) logActions() bool {
-	return tr.Log&(gomkore.TraceInfo|gomkore.TraceDebug) != 0
-}
+func (tr WriteTracer) CloseActionEnv(t *gomkore.Trace, env *gomkore.Env) error { return nil }
 
 func (tr WriteTracer) RunAction(t *gomkore.Trace, a *gomkore.Action) {
-	if tr.logActions() {
+	if tr.Log.Traces(TraceImportant) {
 		fmt.Fprintf(tr.W, "%d@%s\t  run action (%s)\n", t.Build(), t.TopTag(), a)
 	}
 }
 
 func (tr WriteTracer) RunImplicitAction(t *gomkore.Trace, _ *gomkore.Action) {
-	if tr.Log&gomkore.TraceDebug != 0 {
+	if tr.Log.Traces(TraceDetails) {
 		fmt.Fprintf(tr.W, "%d@%s\t  implicit action\n", t.Build(), t.TopTag())
 	}
 }
 
 func (tr WriteTracer) ScheduleResTimeZero(t *gomkore.Trace, a *gomkore.Action, res *gomkore.Goal) {
-	if !tr.logActions() {
-		return
+	if tr.Log.Traces(TraceNormal) {
+		fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) for result [%s] without state time\n",
+			t.Build(),
+			t.TopTag(),
+			a,
+			res,
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) for result [%s] without state time\n",
-		t.Build(),
-		t.TopTag(),
-		a,
-		res,
-	)
 }
 
 func (tr WriteTracer) ScheduleNotPremises(t *gomkore.Trace, a *gomkore.Action, res *gomkore.Goal) {
-	if !tr.logActions() {
-		return
+	if tr.Log.Traces(TraceNormal) {
+		fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) without premise for result [%s]\n",
+			t.Build(),
+			t.TopTag(),
+			a,
+			res,
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) without premise for result [%s]\n",
-		t.Build(),
-		t.TopTag(),
-		a,
-		res,
-	)
 }
 
 func (tr WriteTracer) SchedulePreTimeZero(t *gomkore.Trace, a *gomkore.Action, res, pre *gomkore.Goal) {
-	if !tr.logActions() {
-		return
+	if tr.Log.Traces(TraceNormal) {
+		fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) for result [%s], premise [%s] has no state time\n",
+			t.Build(),
+			t.TopTag(),
+			a,
+			res,
+			pre,
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) for result [%s], premise [%s] has no state time\n",
-		t.Build(),
-		t.TopTag(),
-		a,
-		res,
-		pre,
-	)
 }
 
 func (tr WriteTracer) ScheduleOutdated(t *gomkore.Trace, a *gomkore.Action, res, pre *gomkore.Goal) {
-	if !tr.logActions() {
-		return
+	if tr.Log.Traces(TraceNormal) {
+		fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) for result [%s], premise [%s] is newer\n",
+			t.Build(),
+			t.TopTag(),
+			a,
+			res,
+			pre,
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t  schedule (%s) for result [%s], premise [%s] is newer\n",
-		t.Build(),
-		t.TopTag(),
-		a,
-		res,
-		pre,
-	)
 }
 
 func (tr WriteTracer) CheckGoal(t *gomkore.Trace, g *gomkore.Goal) {
-	if !tr.logGoals() {
-		return
+	if tr.Log.Traces(TraceImportant) {
+		fmt.Fprintf(tr.W, "%d@%s\t? [%s] %s\n",
+			t.Build(),
+			t.TopTag(),
+			g,
+			t.Path(),
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t? [%s] %s\n",
-		t.Build(),
-		t.TopTag(),
-		g,
-		t.Path(),
-	)
 }
 
 func (tr WriteTracer) GoalUpToDate(t *gomkore.Trace, g *gomkore.Goal) {
-	if !tr.logGoals() {
-		return
+	if tr.Log.Traces(TraceImportant) {
+		fmt.Fprintf(tr.W, "%d@%s\t. [%s] is up-to-date\n",
+			t.Build(),
+			t.TopTag(),
+			g,
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t. [%s] is up-to-date\n",
-		t.Build(),
-		t.TopTag(),
-		g,
-	)
 }
 
 func (tr WriteTracer) GoalNeedsActions(t *gomkore.Trace, g *gomkore.Goal, n int) {
-	if !tr.logGoals() {
-		return
+	if tr.Log.Traces(TraceImportant) {
+		fmt.Fprintf(tr.W, "%d@%s\t! [%s] needs %d actions\n",
+			t.Build(),
+			t.TopTag(),
+			g,
+			n,
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t! [%s] needs %d actions\n",
-		t.Build(),
-		t.TopTag(),
-		g,
-		n,
-	)
 }
 
 func (tr WriteTracer) RemoveArtefact(t *gomkore.Trace, g *gomkore.Goal) {
-	if !tr.logGoals() {
-		return
+	if tr.Log.Traces(TraceImportant) {
+		fmt.Fprintf(tr.W, "%d@%s\t! remove artefact [%s]\n",
+			t.Build(),
+			t.TopTag(),
+			g,
+		)
 	}
-	fmt.Fprintf(tr.W, "%d@%s\t! remove artefact [%s]\n",
-		t.Build(),
-		t.TopTag(),
-		g,
-	)
 }
 
 type sllmArgs []any

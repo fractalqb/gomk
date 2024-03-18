@@ -1,6 +1,7 @@
 package gomk
 
 import (
+	"git.fractalqb.de/fractalqb/eloc/must"
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
 	"git.fractalqb.de/fractalqb/gomk/mkfs"
 )
@@ -44,7 +45,7 @@ func (x OutFile) Artefact(g GoalEd) gomkore.Artefact {
 		return nil
 	}
 	if x.Dest != nil {
-		f = mustRet(f.Moved(x.Strip, x.Dest))
+		f = must.Ret(f.Moved(x.Strip, x.Dest))
 	}
 	if x.Ext == nil {
 		return f

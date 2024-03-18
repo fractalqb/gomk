@@ -14,6 +14,8 @@ import (
 // Artefact represents the tangible outcome of a [Goal] being reached. A special
 // case is the [Abstract] artefact.
 type Artefact interface {
+	Key() any
+
 	// Name returns the name of the artefact that must be unique in the Project.
 	Name(in *Project) string
 
@@ -31,6 +33,8 @@ type RemovableArtefact interface {
 type Abstract string
 
 var _ Artefact = Abstract("")
+
+func (a Abstract) Key() any { return a }
 
 func (a Abstract) Name(*Project) string { return string(a) }
 
@@ -83,6 +87,10 @@ const (
 
 func (m UpdateMode) Actions() UpdateMode { return m & updActions }
 func (m UpdateMode) Ordered() bool       { return (m & UpdUnordered) == 0 }
+
+type GoalFactory interface {
+	Goals(in *Project) ([]*Goal, error)
+}
 
 // A Goal is something you want to achieve in your [Project]. Each goal is
 // associated with an [Artefact] – generally something tangible that is

@@ -3,6 +3,7 @@ package gomk
 import (
 	"io/fs"
 
+	"git.fractalqb.de/fractalqb/eloc/must"
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
 	"git.fractalqb.de/fractalqb/gomk/mkfs"
 )
@@ -14,10 +15,7 @@ func (ed ProjectEd) Project() *gomkore.Project { return ed.p }
 
 func (ed ProjectEd) NewAction(premises, results []GoalEd, op gomkore.Operation) ActionEd {
 	prems, ress := goals(premises), goals(results)
-	a, err := ed.p.NewAction(prems, ress, op)
-	if err != nil {
-		panic(err)
-	}
+	a := must.Ret(ed.p.NewAction(prems, ress, op))
 	return ActionEd{a}
 }
 
@@ -31,6 +29,10 @@ func (ed ProjectEd) Goal(atf gomkore.Artefact) GoalEd {
 	return GoalEd{g}
 }
 
+func (ed ProjectEd) AbstractGoal(name string) GoalEd {
+	return ed.Goal(gomkore.Abstract(name))
+}
+
 func (ed ProjectEd) RelPath(p string) string {
 	rp, err := ed.p.RelPath(p)
 	if err != nil {
@@ -40,15 +42,27 @@ func (ed ProjectEd) RelPath(p string) string {
 }
 
 func (ed ProjectEd) FsStat(a mkfs.Artefact) fs.FileInfo {
-	return mustRet(mkfs.Stat(a, ed.p))
+	return must.Ret(mkfs.Stat(a, ed.p))
 }
 
 func (ed ProjectEd) FsExists(a mkfs.Artefact) bool {
-	return mustRet(mkfs.Exists(a, ed.p))
+	return must.Ret(mkfs.Exists(a, ed.p))
 }
 
 // GoalEd is used with [Edit].
 type GoalEd struct{ g *gomkore.Goal }
+
+func GoalEds(prj ProjectEd, f gomkore.GoalFactory) (geds []GoalEd) {
+	gs, err := f.Goals(prj.Project())
+	if err != nil {
+		panic(err)
+	}
+	geds = make([]GoalEd, len(gs))
+	for i, g := range gs {
+		geds[i] = GoalEd{g}
+	}
+	return geds
+}
 
 func (ed GoalEd) Goal() *gomkore.Goal { return ed.g }
 

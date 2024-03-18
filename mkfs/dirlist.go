@@ -1,6 +1,8 @@
 package mkfs
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -21,15 +23,55 @@ var _ Directory = DirList{}
 func (d DirList) Path() string { return d.Dir }
 
 func (d DirList) List(in *gomkore.Project) (ls []string, err error) {
-	prjDir, err := in.AbsPath(d.Dir)
+	prjDir, err := in.AbsPath(d.Path())
 	if err != nil {
 		return nil, err
 	}
-	err = d.ls(prjDir, func(e fs.DirEntry) error {
+	err = d.ls(prjDir, func(_ string, e fs.DirEntry) error {
 		ls = append(ls, filepath.Join(d.Dir, e.Name()))
 		return nil
 	})
 	return
+}
+
+func (d DirList) Goals(in *gomkore.Project) (gs []*gomkore.Goal, err error) {
+	prjDir, err := in.AbsPath(d.Path())
+	if err != nil {
+		return nil, err
+	}
+	err = d.ls(prjDir, func(_ string, e fs.DirEntry) error {
+		p := filepath.Join(d.Dir, e.Name())
+		if e.IsDir() {
+			dir := DirList{Dir: p, Filter: d.Filter}
+			g, err := in.Goal(dir)
+			if err != nil {
+				return err
+			}
+			gs = append(gs, g)
+		} else {
+			g, err := in.Goal(File(p))
+			if err != nil {
+				return err
+			}
+			gs = append(gs, g)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return gs, nil
+}
+
+type dirListKey string
+
+func (d DirList) Key() any {
+	h := md5.New() // No crypto relevance! (?)
+	fmt.Fprintln(h, d.Dir)
+	if d.Filter != nil {
+		d.Filter.Hash(h)
+	}
+	return dirListKey(hex.EncodeToString(h.Sum(nil)))
 }
 
 func (d DirList) Name(prj *gomkore.Project) string {
@@ -38,15 +80,14 @@ func (d DirList) Name(prj *gomkore.Project) string {
 }
 
 func (d DirList) StateAt(in *gomkore.Project) (t time.Time, err error) {
-	prjDir, err := in.AbsPath(d.Dir)
+	prjDir, err := in.AbsPath(d.Path())
 	if err != nil {
 		return time.Time{}, err
 	}
-	err = d.ls(prjDir, func(e fs.DirEntry) error {
-		p := filepath.Join(prjDir, e.Name())
-		if st, err := os.Stat(p); err != nil {
+	err = d.ls(prjDir, func(_ string, e fs.DirEntry) error {
+		if info, err := e.Info(); err != nil {
 			return err
-		} else if mt := st.ModTime(); mt.After(t) {
+		} else if mt := info.ModTime(); mt.After(t) {
 			t = mt
 		}
 		return nil
@@ -76,27 +117,31 @@ func (d DirList) Exists(in *gomkore.Project) (bool, error) {
 }
 
 func (d DirList) Remove(in *gomkore.Project) error {
-	prjDir, err := in.AbsPath(d.Dir)
+	prjDir, err := in.AbsPath(d.Path())
 	if err != nil {
 		return err
 	}
-	return d.ls(prjDir, func(de fs.DirEntry) error {
-		f := filepath.Join(prjDir, de.Name())
-		return os.Remove(f)
+	err = d.ls(prjDir, func(_ string, e fs.DirEntry) error {
+		p := filepath.Join(prjDir, e.Name())
+		return os.Remove(p)
 	})
+	if err != nil {
+		return err
+	}
+	return rmDirIfEmpty(prjDir)
 }
 
 func (d DirList) Moved(strip, dest Directory) (DirList, error) {
 	var path string
 	if strip == nil {
 		var err error
-		path, err = fsMove(d.Path(), "", dest.Path())
+		path, err = movedPath(d.Path(), "", dest.Path())
 		if err != nil {
 			return DirList{}, err
 		}
 	} else {
 		var err error
-		path, err = fsMove(d.Path(), strip.Path(), dest.Path())
+		path, err = movedPath(d.Path(), strip.Path(), dest.Path())
 		if err != nil {
 			return DirList{}, err
 		}
@@ -107,8 +152,8 @@ func (d DirList) Moved(strip, dest Directory) (DirList, error) {
 	}, nil
 }
 
-func (d DirList) ls(dir string, do func(fs.DirEntry) error) error {
-	rdir, err := os.ReadDir(dir)
+func (d DirList) ls(prjDir string, do func(p string, e fs.DirEntry) error) error {
+	rdir, err := os.ReadDir(prjDir)
 	if err != nil {
 		return err
 	}
@@ -120,7 +165,7 @@ func (d DirList) ls(dir string, do func(fs.DirEntry) error) error {
 				continue
 			}
 		}
-		if err := do(entry); err != nil {
+		if err := do(entry.Name(), entry); err != nil {
 			return err
 		}
 	}

@@ -48,6 +48,9 @@ type GoBuild struct {
 var _ gomkore.Operation = (*GoBuild)(nil)
 
 func (gb *GoBuild) Describe(a *gomkore.Action, _ *gomkore.Env) string {
+	if gb.Install {
+		gb.describe("install", a)
+	}
 	return gb.describe("build", a)
 }
 

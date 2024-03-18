@@ -15,22 +15,15 @@ type TracerCommon interface {
 
 	StartProject(t *Trace, p *Project, activity string)
 	DoneProject(t *Trace, p *Project, activity string, dt time.Duration)
+
+	SetupActionEnv(t *Trace, env *Env) (*Env, error)
+	CloseActionEnv(t *Trace, env *Env) error
 }
 
 type Tracer interface {
 	BuildTracer
 	CleanTracer
 }
-
-type TraceLog int
-
-var DefaultTraceLog TraceLog = TraceWarn
-
-const (
-	TraceWarn TraceLog = (1 << iota)
-	TraceInfo
-	TraceDebug
-)
 
 type Trace struct {
 	root *traceRoot
@@ -101,7 +94,7 @@ func (t *Trace) removeArtefact(g *Goal) {
 }
 
 func (t *Trace) Build() BuildID {
-	if t.root == nil {
+	if t.up == nil {
 		return 0
 	}
 	return t.root.prj.Build()
@@ -156,6 +149,14 @@ func (t *Trace) pushGoal(g *Goal) *Trace {
 		obj:  g,
 		id:   t.root.idSeq.Add(1),
 	}
+}
+
+func (t *Trace) setupActionEnv(env *Env) (*Env, error) {
+	return t.root.tr.SetupActionEnv(t, env)
+}
+
+func (t *Trace) closeActionEnv(env *Env) error {
+	return t.root.tr.CloseActionEnv(t, env)
 }
 
 type traceRoot struct {

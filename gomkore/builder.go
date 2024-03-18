@@ -1,12 +1,9 @@
 package gomkore
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"hash"
-	"io"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -17,27 +14,76 @@ type Builder struct {
 
 var _ Operation = (*Builder)(nil)
 
-// Project builds all leafs in prj.
-func (bd *Builder) Project(prj *Project, tr *Trace) error {
-	return bd.ProjectContext(context.Background(), prj, tr)
+func NewBuilder(tr *Trace, env *Env) (*Builder, error) {
+	if tr == nil {
+		return nil, errors.New("no trace for new builder")
+	}
+	return &Builder{
+		updater: updater{
+			trace: tr,
+			env:   env,
+		},
+	}, nil
 }
 
-// ProjectContext builds all leafs in prj.
-func (bd *Builder) ProjectContext(ctx context.Context, prj *Project, tr *Trace) error {
+// Project builds all leafs in prj.
+func (bd *Builder) Project(prj *Project) error {
 	bd.bid = prj.LockBuild()
 	defer prj.Unlock()
-	if bd.Env == nil {
-		bd.Env = DefaultEnv(tr)
+	if bd.env == nil {
+		bd.env = DefaultEnv(bd.trace)
 	}
-	oldEnv, err := bd.prepLogDir()
-	if err != nil {
-		return err
-	}
-	defer func() { bd.restoreEnv(oldEnv) }()
-	return bd.project(tr, prj)
+	return bd.buildPrj(bd.trace, prj)
 }
 
-func (bd *Builder) project(tr *Trace, prj *Project) error {
+func (bd *Builder) Goals(gs ...*Goal) error {
+	if len(gs) == 0 {
+		return nil
+	}
+	var (
+		prj      *Project
+		prjStart time.Time
+	)
+	defer func() {
+		if prj != nil {
+			bd.trace.doneProject(prj, "building", time.Since(prjStart))
+			prj.Unlock()
+		}
+	}()
+	for _, g := range gs {
+		if p := g.Project(); p != prj {
+			if prj != nil {
+				bd.trace.doneProject(prj, "building", time.Since(prjStart))
+				prj.Unlock()
+			}
+			prj = p
+			bd.trace.startProject(prj, "building")
+			prjStart = time.Now()
+			if bd.env == nil {
+				bd.env = DefaultEnv(bd.trace)
+			}
+			prj.LockBuild()
+		}
+		if err := bd.buildGoal(bd.trace, g); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (bd *Builder) NamedGoals(prj *Project, names ...string) error {
+	var gs []*Goal
+	for _, n := range names {
+		g := prj.FindGoal(n)
+		if g == nil {
+			return fmt.Errorf("no goal named '%s' in project '%s'", n, prj.String())
+		}
+		gs = append(gs, g)
+	}
+	return bd.Goals(gs...)
+}
+
+func (bd *Builder) buildPrj(tr *Trace, prj *Project) error {
 	start := time.Now()
 	tr = tr.pushProject(prj)
 	tr.startProject(prj, "building")
@@ -49,57 +95,6 @@ func (bd *Builder) project(tr *Trace, prj *Project) error {
 	}
 	tr.doneProject(prj, "building", time.Since(start))
 	return nil
-}
-
-func (bd *Builder) Goals(tr *Trace, gs ...*Goal) error {
-	return bd.GoalsContext(context.Background(), tr, gs...)
-}
-
-// TODO LogDir
-func (bd *Builder) GoalsContext(ctx context.Context, tr *Trace, gs ...*Goal) error {
-	if len(gs) == 0 {
-		return nil
-	}
-	var prj *Project
-	defer func() {
-		if prj != nil {
-			prj.Unlock()
-		}
-	}()
-	for _, g := range gs {
-		if p := g.Project(); p != prj {
-			if prj != nil {
-				tr.doneProject(prj, "building", 0) // TODO duration
-				prj.Unlock()
-			}
-			tr.startProject(prj, "building")
-			if bd.Env == nil {
-				bd.Env = DefaultEnv(tr)
-			}
-			p.LockBuild()
-			prj = p
-		}
-		if err := bd.buildGoal(tr, g); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (bd *Builder) NamedGoals(prj *Project, tr *Trace, names ...string) error {
-	return bd.NamedGoalsContext(context.Background(), tr, prj, names...)
-}
-
-func (bd *Builder) NamedGoalsContext(ctx context.Context, tr *Trace, prj *Project, names ...string) error {
-	var gs []*Goal
-	for _, n := range names {
-		g := prj.FindGoal(n)
-		if g == nil {
-			return fmt.Errorf("no goal named '%s' in project '%s'", n, prj.String())
-		}
-		gs = append(gs, g)
-	}
-	return bd.GoalsContext(ctx, tr, gs...)
 }
 
 func (bd *Builder) buildGoal(tr *Trace, g *Goal) error {
@@ -125,48 +120,6 @@ func (bd *Builder) buildGoal(tr *Trace, g *Goal) error {
 	return err
 }
 
-func (bd *Builder) restoreEnv(old *Env) {
-	if bd.Env == old {
-		return
-	}
-	if c, ok := bd.Env.Out.(io.Closer); ok {
-		c.Close()
-	}
-	if c, ok := bd.Env.Err.(io.Closer); ok {
-		c.Close()
-	}
-	bd.Env = old
-}
-
-func (bd *Builder) prepLogDir() (restore *Env, err error) {
-	if bd.LogDir == "" {
-		return bd.Env, nil
-	}
-	bdir := fmt.Sprintf("%s.%d", time.Now().Format("060102-150405"), bd.bid)
-	bdir = filepath.Join(bd.LogDir, bdir)
-	if bd.MkDirMode != 0 {
-		if err = os.MkdirAll(bdir, bd.MkDirMode); err != nil {
-			return bd.Env, err
-		}
-	} else if err = os.Mkdir(bdir, 0777); err != nil {
-		return bd.Env, err
-	}
-	outFile, err := os.Create(filepath.Join(bdir, "build.out"))
-	if err != nil {
-		return bd.Env, err
-	}
-	errFile, err := os.Create(filepath.Join(bdir, "build.err"))
-	if err != nil {
-		outFile.Close()
-		return bd.Env, err
-	}
-	restore = bd.Env
-	bd.Env = restore.Clone()
-	bd.Env.Out = stackedWriter{top: outFile, tail: restore.Out}
-	bd.Env.Err = stackedWriter{top: errFile, tail: restore.Err}
-	return restore, nil
-}
-
 func (bd *Builder) Describe(*Action, *Env) string {
 	return "Build project" // TODO better description
 }
@@ -184,7 +137,7 @@ func (bd *Builder) Do(tr *Trace, a *Action, env *Env) error {
 		}
 	}
 	for _, prj := range prjs {
-		if err := bd.project(tr, prj); err != nil {
+		if err := bd.buildPrj(tr, prj); err != nil {
 			return err
 		}
 	}
@@ -192,7 +145,7 @@ func (bd *Builder) Do(tr *Trace, a *Action, env *Env) error {
 }
 
 func (bd *Builder) WriteHash(h hash.Hash, a *Action, env *Env) (bool, error) {
-	return false, nil // TODO good idea to hash build project operation
+	return false, nil // TODO good idea for how to hash build project operation
 }
 
 type BuildTracer interface {

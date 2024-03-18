@@ -8,27 +8,27 @@ import (
 	"log/slog"
 	"os"
 
-	"git.fractalqb.de/fractalqb/eloc/must"
 	"git.fractalqb.de/fractalqb/gomk"
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
 	"git.fractalqb.de/fractalqb/gomk/mkfs"
 )
 
 var (
-	// go generate ./...
+	// Operation: go generate ./...
 	goGenerate = gomk.GoGenerate{FilesPkgs: []string{"./..."}}
 
-	// go test ./...
+	// Operation: go test ./...
 	goTest = gomk.GoTest{Pkgs: []string{"./..."}}
 
-	// go build -trimpath -s -w
+	// Operation: go build -trimpath -s -w
 	goBuild = gomk.GoBuild{TrimPath: true, LDFlags: []string{"-s", "-w"}}
 
+	tracer = gomk.NewDefaultTracer()
+
+	// Some options (See also: https://pkg.go.dev/codeberg.org/fractalqb/gomklib#GoModule)
 	clean, dryrun bool
 	writeDot      bool
 	offline       bool
-
-	tracr = gomk.WriteTracer{W: os.Stderr, Log: gomkore.TraceDebug}
 )
 
 func flags() {
@@ -36,24 +36,24 @@ func flags() {
 	flag.BoolVar(&clean, "clean", clean, "Clean project")
 	flag.BoolVar(&dryrun, "n", dryrun, "Dryrun")
 	flag.BoolVar(&offline, "offline", offline, "Skip everything that requires being online")
-	fLog := flag.String("log", "", "Set log level {off, warn, info, debug}")
+	fTrace := flag.String("trace", "", "Set trace level")
 	flag.Parse()
 
-	if *fLog != "" {
-		tracr.ParseLogFlag(*fLog)
-	}
+	tracer.ParseLevelFlag(*fTrace)
 }
 
 func main() {
 	flags()
 
+	// The project in current working dir
 	prj := gomkore.NewProject("")
 
-	must.Do(gomk.Edit(prj, func(prj gomk.ProjectEd) {
-		goalGoGen, _ := prj.Goal(gomkore.Abstract("go-gen")).
+	// Start editing project, recovering panics to errors
+	err := gomk.Edit(prj, func(prj gomk.ProjectEd) {
+		goalGoGen, _ := prj.AbstractGoal("go-gen").
 			By(&goGenerate)
 
-		goalTest, _ := prj.Goal(gomkore.Abstract("test")).
+		goalTest, _ := prj.AbstractGoal("test").
 			By(&goTest, goalGoGen)
 
 		goalPkgFoo := prj.Goal(mkfs.DirFiles("cmd/foo", "", 1)).
@@ -62,20 +62,17 @@ func main() {
 		goalPkgBar := prj.Goal(mkfs.DirFiles("cmd/bar", "", 1)).
 			ImpliedBy(goalTest)
 
-		prj.Goal(mkfs.DirTree{
-			Dir: "dist",
-			Filter: mkfs.All{
-				mkfs.IsDir(false),
-				mkfs.Mode{Any: 0111},
-				mkfs.MaxPathLen(1),
-			},
+		exes, _ := prj.Goal(mkfs.DirList{ // executable files in ./dist
+			Dir:    "dist",
+			Filter: mkfs.All{mkfs.IsDir(false), mkfs.Mode{Any: 0111}},
 		}).
 			By(&goBuild, goalPkgFoo, goalPkgBar)
+		exes.SetRemovable(true) // Clean is allowed to remove these
 
 		docOutDir := mkfs.DirFiles("dist/doc", "", 0)
 
 		mdSrcDir := mkfs.DirList{Dir: "doc", Filter: mkfs.NameMatch("*.md")}
-		mdGoals := gomk.FsGoals(prj, mdSrcDir, nil)
+		mdGoals := gomk.GoalEds(prj, mdSrcDir)
 		goals := gomk.Convert(mdGoals,
 			gomk.OutFile{
 				Ext:   gomk.ExtMap{".md": ".html"},
@@ -83,8 +80,11 @@ func main() {
 				Dest:  docOutDir,
 			}.Artefact,
 			func(out gomk.GoalEd) { out.SetRemovable(true) },
-			// requires 'markdown' to be in the path
-			&gomk.ConvertCmd{Exe: "markdown", PassOut: "stdout"},
+			&gomk.ConvertCmd{ // requires 'markdown' to be in the path
+				Exe:     "markdown",
+				PassOut: "stdout",
+				MkDirs:  mkfs.MkDirs{MkDirMode: 0777},
+			},
 			nil,
 		)
 		for _, g := range goals {
@@ -94,7 +94,7 @@ func main() {
 		goalDoc.SetUpdateMode(gomk.UpdAllActions | gomk.UpdUnordered)
 
 		pumlSrcDir := mkfs.DirList{Dir: "doc", Filter: mkfs.NameMatch("*.puml")}
-		pumlGoals := gomk.FsGoals(prj, pumlSrcDir, nil)
+		pumlGoals := gomk.GoalEds(prj, pumlSrcDir)
 		goals = gomk.Convert(pumlGoals,
 			gomk.OutFile{
 				Ext:   gomk.ExtMap{".puml": ".png"},
@@ -102,12 +102,12 @@ func main() {
 				Dest:  docOutDir,
 			}.Artefact,
 			func(out gomk.GoalEd) { out.SetRemovable(true) },
-			// requires 'plantuml' to be in the path
-			&gomk.ConvertCmd{
+			&gomk.ConvertCmd{ // requires 'plantuml' to be in the path
 				Exe:        "plantuml",
 				PassOut:    "-o",
 				OutRelToIn: true,
 				OutDir:     true,
+				MkDirs:     mkfs.MkDirs{MkDirMode: 0777},
 			},
 			nil,
 		)
@@ -115,12 +115,14 @@ func main() {
 			g.SetRemovable(true)
 		}
 		goalDoc.ImpliedBy(goals...)
-	}))
-
-	tr := gomkore.NewTrace(context.Background(), tracr)
+	})
+	if err != nil {
+		log.Fatal("editing project:", err)
+	}
+	tr := gomkore.NewTrace(context.Background(), tracer)
 
 	if clean {
-		err := gomkore.Clean(prj, dryrun, tr)
+		err := gomk.Clean(prj, dryrun, tr)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -136,13 +138,13 @@ func main() {
 		return
 	}
 
-	builder := gomkore.Builder{} //LogDir: "build", MkDirMode: 0777}
+	build := gomk.NewBuilder(tr, nil)
 	if flag.NArg() == 0 {
-		if err := builder.Project(prj, tr); err != nil {
+		if err := build.Project(prj); err != nil {
 			slog.Error(err.Error())
 		}
 	} else {
-		if err := builder.NamedGoals(prj, tr, flag.Args()...); err != nil {
+		if err := build.NamedGoals(prj, flag.Args()...); err != nil {
 			slog.Error(err.Error())
 		}
 	}

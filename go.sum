@@ -1,14 +1,8 @@
 git.fractalqb.de/fractalqb/eloc v0.1.2 h1:1WeqwB/oOc+EJ9P6nT6tp/ykaYV340h5hSmXm8ulQPA=
 git.fractalqb.de/fractalqb/eloc v0.1.2/go.mod h1:bYWIoe0VSIhnJLgrgh1TNOF0n72MpwobmOJS8oZah1I=
-git.fractalqb.de/fractalqb/icontainer v0.3.0 h1:Ng806FZ9qNLCgk9VJt6egCIMxzbiBTzELHJTwQ+Pg8s=
-git.fractalqb.de/fractalqb/icontainer v0.3.0/go.mod h1:8tedqqrYIvDzOkigsUUtta/KoP1pHjHJ0s+4cx5rkXU=
-git.fractalqb.de/fractalqb/qblog v0.14.5 h1:WFRDx90jB8qF423uv1TvxlzOXGKTcVokLY4TTx7Pd30=
-git.fractalqb.de/fractalqb/qblog v0.14.5/go.mod h1:SmILpdHE1N1fMrRZ3s4O8WORke5JRuvhxeRJ41gBuDs=
 git.fractalqb.de/fractalqb/sllm/v3 v3.0.0 h1:B9BlqGxyjIsVwfjFFRPf3Ikddwb2Roy7bmTf+9nmG9k=
 git.fractalqb.de/fractalqb/sllm/v3 v3.0.0/go.mod h1:edz8wv/8tc6LGR8GNNLndhnwmhMN/v/tUxo6vrZFbaM=
 git.fractalqb.de/fractalqb/testerr v0.0.0-20240106053604-b4fc61123022 h1:XvPijtkuz8JOXk9iR+6Sajq37SNknlhynMwsjOxFQeI=
 git.fractalqb.de/fractalqb/testerr v0.0.0-20240106053604-b4fc61123022/go.mod h1:9QIePAgsw5T/fD2CZmMUFs9xdBxryombyGoA812O288=
 github.com/bits-and-blooms/bitset v1.13.0 h1:bAQ9OPNFYbGHV6Nez0tmNI0RiEu7/hxlYJRUA0wFAVE=
 github.com/bits-and-blooms/bitset v1.13.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
-github.com/fractalqb/texst v0.8.0 h1:r+2Vlj2rys0VNFgQVVp/rCFqO+Hc0HCj8b6pK1DLP04=
-github.com/fractalqb/texst v0.8.0/go.mod h1:1I3XAXaa6C7b8ueo/QIQFXjyhj8oOJA2vNoNHOl08h4=

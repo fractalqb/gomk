@@ -1,22 +1,18 @@
 package gomkore
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"slices"
 	"unsafe"
 )
 
 type updater struct {
-	Env       *Env
-	LogDir    string
-	MkDirMode fs.FileMode
-
-	bid BuildID // => updater must not be used concurrently
+	trace *Trace
+	env   *Env
+	bid   BuildID // => updater must not be used concurrently
 }
+
+func (up *updater) Trace() *Trace { return up.trace }
 
 func (up *updater) updateGoal(tr *Trace, g *Goal) (bool, error) {
 	gid := uintptr(unsafe.Pointer(g))
@@ -55,25 +51,13 @@ func (up *updater) updateGoal(tr *Trace, g *Goal) (bool, error) {
 	return true, err
 }
 
-func (up *updater) trEnv(tr *Trace) *Env {
-	e := up.Env.Sub()
-	var pre bytes.Buffer
-	fmt.Fprintf(&pre, "%d@%s Out: ", tr.Build(), tr.TopTag())
-	e.Out = NewPrefixWriter(e.Out, bytes.Clone(pre.Bytes()))
-	pre.Reset()
-	fmt.Fprintf(&pre, "%d@%s Err: ", tr.Build(), tr.TopTag())
-	e.Err = NewPrefixWriter(e.Err, pre.Bytes())
-	return e
-}
-
 func (up *updater) updateAll(tr *Trace, g *Goal, _ []int) error {
-	env := up.trEnv(tr)
 	switch len(g.ResultOf()) {
 	case 0:
 		return nil
 	case 1:
 		act := g.PreAction(0)
-		preBID, err := act.Run(tr, up.bid, env)
+		preBID, err := act.Run(tr, up.env)
 		if err != nil {
 			return err
 		} else if preBID > up.bid {
@@ -86,7 +70,7 @@ func (up *updater) updateAll(tr *Trace, g *Goal, _ []int) error {
 	}
 	if g.UpdateMode.Ordered() {
 		for _, act := range g.ResultOf() {
-			if preBID, err := act.Run(tr, up.bid, env); err != nil {
+			if preBID, err := act.Run(tr, up.env); err != nil {
 				return err
 			} else if preBID == up.bid {
 				return fmt.Errorf("action %s potentially ran out of order", act)
@@ -99,7 +83,7 @@ func (up *updater) updateAll(tr *Trace, g *Goal, _ []int) error {
 		}
 	} else {
 		for _, act := range g.ResultOf() {
-			if preBID, err := act.Run(tr, up.bid, env); err != nil {
+			if preBID, err := act.Run(tr, up.env); err != nil {
 				return err
 			} else if preBID > up.bid {
 				return fmt.Errorf("action %s already run by younger build %d",
@@ -113,11 +97,10 @@ func (up *updater) updateAll(tr *Trace, g *Goal, _ []int) error {
 }
 
 func (up *updater) updateSome(tr *Trace, g *Goal, chgs []int) error {
-	env := up.trEnv(tr)
 	if len(chgs) > 1 && g.UpdateMode.Ordered() {
 		for _, idx := range chgs {
 			act := g.PreAction(idx)
-			if preBID, err := act.Run(tr, up.bid, env); err != nil {
+			if preBID, err := act.Run(tr, up.env); err != nil {
 				return err
 			} else if preBID == up.bid {
 				return fmt.Errorf("action %s potentially ran out of order", act)
@@ -131,7 +114,7 @@ func (up *updater) updateSome(tr *Trace, g *Goal, chgs []int) error {
 	} else {
 		for _, idx := range chgs {
 			act := g.PreAction(idx)
-			if preBID, err := act.Run(tr, up.bid, env); err != nil {
+			if preBID, err := act.Run(tr, up.env); err != nil {
 				return err
 			} else if preBID > up.bid {
 				return fmt.Errorf("action %s already run by younger build %d",
@@ -174,8 +157,7 @@ func (up *updater) updateAny(tr *Trace, g *Goal, chgs []int) error {
 	if done >= 0 {
 		return nil
 	}
-	env := up.trEnv(tr)
-	_, err := g.PreAction(chgs[0]).Run(tr, up.bid, env)
+	_, err := g.PreAction(chgs[0]).Run(tr, up.env)
 	return err
 }
 
@@ -199,31 +181,6 @@ func (up *updater) updateOne(tr *Trace, g *Goal, chg int) error {
 			}
 		}
 	}
-	env := up.trEnv(tr)
-	_, err := g.PreAction(chg).Run(tr, up.bid, env)
+	_, err := g.PreAction(chg).Run(tr, up.env)
 	return err
-}
-
-type stackedWriter struct {
-	top, tail io.Writer
-}
-
-func (w stackedWriter) Write(p []byte) (n int, err error) {
-	n1, err := w.top.Write(p)
-	n2, err2 := w.tail.Write(p)
-	if err2 != nil {
-		if err == nil {
-			err = err2
-		} else {
-			err = errors.Join(err, err2)
-		}
-	}
-	return n1 + n2, err
-}
-
-func (w stackedWriter) Close() error {
-	if c, ok := w.top.(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
 }

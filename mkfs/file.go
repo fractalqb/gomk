@@ -14,6 +14,8 @@ type File string
 
 var _ Artefact = File("")
 
+func (f File) Key() any { return f }
+
 func (f File) Path() string { return string(f) }
 
 func (f File) Name(in *gomkore.Project) string {
@@ -69,13 +71,13 @@ func (f File) Moved(strip, dest Directory) (File, error) {
 	var path string
 	if strip == nil {
 		var err error
-		path, err = fsMove(f.Path(), "", dest.Path())
+		path, err = movedPath(f.Path(), "", dest.Path())
 		if err != nil {
 			return File(""), err
 		}
 	} else {
 		var err error
-		path, err = fsMove(f.Path(), strip.Path(), dest.Path())
+		path, err = movedPath(f.Path(), strip.Path(), dest.Path())
 		if err != nil {
 			return File(""), err
 		}

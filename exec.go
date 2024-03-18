@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -201,7 +200,7 @@ type ConvertCmd struct {
 	// file name.
 	OutDir bool
 
-	MkDirMode fs.FileMode
+	mkfs.MkDirs
 }
 
 var _ gomkore.Operation = (*ConvertCmd)(nil)
@@ -294,6 +293,9 @@ func (cc *ConvertCmd) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env)
 		op.Args = append(op.Args, outFile)
 	case "stdout":
 		op.OutFile = outFile
+	}
+	if err := cc.MkDirs.Do(tr, a, env); err != nil {
+		return err
 	}
 	return op.Do(tr, a, env)
 }

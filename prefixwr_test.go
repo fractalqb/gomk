@@ -1,4 +1,4 @@
-package gomkore
+package gomk
 
 import (
 	"bytes"
@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-func ExamplePrefixWriter() {
-	pw := NewPrefixWriterString(os.Stdout, "PRE:")
+func Example_prefixWriter() {
+	pw := newPrefixWriterString(os.Stdout, "PRE:")
 	io.WriteString(pw, "foo")
 	io.WriteString(pw, "bar\n")
 	io.WriteString(pw, "baz\nquux")
@@ -46,7 +46,7 @@ func BenchmarkWrite(b *testing.B) {
 func BenchmarkPrefixWriter(b *testing.B) {
 	var c byte
 	var buf bytes.Buffer
-	pfw := NewPrefixWriterString(&buf, "Prefix:")
+	pfw := newPrefixWriterString(&buf, "Prefix:")
 	randN := benchLineMax - benchLineMin
 	for range b.N {
 		buf.Reset()

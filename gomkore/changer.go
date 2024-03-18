@@ -1,29 +1,54 @@
 package gomkore
 
-import (
-	"context"
-)
+import "errors"
 
 type Changer struct {
 	updater
 }
 
-func (chg *Changer) Goal(g *Goal, tr *Trace) error {
-	return chg.GoalContext(context.Background(), g, tr)
+func NewChanger(tr *Trace, env *Env) (*Changer, error) {
+	if tr == nil {
+		return nil, errors.New("no trace for new changer")
+	}
+	return &Changer{
+		updater: updater{
+			trace: tr,
+			env:   env,
+		},
+	}, nil
 }
 
-func (chg *Changer) GoalContext(ctx context.Context, g *Goal, tr *Trace) error {
-	g.Project().LockBuild()
-	defer g.Project().Unlock()
-	if chg.Env == nil {
-		chg.Env = DefaultEnv(tr)
+func (chg *Changer) Goals(gs ...*Goal) error {
+	if len(gs) == 0 {
+		return nil
 	}
-	tr.Info("Check change of `goal`", `goal`, g)
-	for _, act := range g.PremiseOf() {
-		for _, res := range act.Results() {
-			err := chg.update(tr, res)
-			if err != nil {
-				return err
+	var prj *Project
+	defer func() {
+		if prj != nil {
+			chg.trace.doneProject(prj, "updating", 0) // TODO duration
+			prj.Unlock()
+		}
+	}()
+	for _, g := range gs {
+		if p := g.Project(); p != prj {
+			if prj != nil {
+				chg.trace.doneProject(prj, "updating", 0) // TODO duration
+				prj.Unlock()
+			}
+			prj = p
+			chg.trace.startProject(prj, "updating")
+			if chg.env == nil {
+				chg.env = DefaultEnv(chg.trace)
+			}
+			prj.LockBuild()
+		}
+		chg.trace.checkGoal(g)
+		for _, act := range g.PremiseOf() {
+			for _, res := range act.Results() {
+				err := chg.update(chg.trace, res)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -31,6 +56,7 @@ func (chg *Changer) GoalContext(ctx context.Context, g *Goal, tr *Trace) error {
 }
 
 func (chg *Changer) update(t *Trace, g *Goal) error {
+	t = t.pushGoal(g)
 	if ok, err := chg.updateGoal(t, g); err != nil {
 		return err
 	} else if ok {

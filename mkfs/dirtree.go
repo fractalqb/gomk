@@ -1,6 +1,8 @@
 package mkfs
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -50,10 +52,54 @@ func (d DirTree) List(in *gomkore.Project) (ls []string, err error) {
 		if err != nil {
 			return err
 		}
-		ls = append(ls, p)
+		ls = append(ls, filepath.Join(d.Path(), p))
 		return nil
 	})
 	return
+}
+
+func (d DirTree) Goals(in *gomkore.Project) (gs []*gomkore.Goal, err error) {
+	root, err := in.AbsPath(d.Path())
+	if err != nil {
+		return nil, err
+	}
+	err = d.ls(root, func(p string, e fs.DirEntry) error {
+		p, err := in.RelPath(p)
+		if err != nil {
+			return err
+		}
+		p = filepath.Join(d.Path(), p)
+		if e.IsDir() {
+			dir := DirTree{Dir: p, Filter: d.Filter}
+			g, err := in.Goal(dir)
+			if err != nil {
+				return err
+			}
+			gs = append(gs, g)
+		} else {
+			g, err := in.Goal(File(p))
+			if err != nil {
+				return err
+			}
+			gs = append(gs, g)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return gs, nil
+}
+
+type dirTreeKey string
+
+func (d DirTree) Key() any {
+	h := md5.New() // No crypto relevance! (?)
+	fmt.Fprintln(h, d.Dir)
+	if d.Filter != nil {
+		d.Filter.Hash(h)
+	}
+	return dirTreeKey(hex.EncodeToString(h.Sum(nil)))
 }
 
 func (d DirTree) Name(in *gomkore.Project) string {
@@ -103,22 +149,27 @@ func (d DirTree) Remove(in *gomkore.Project) error {
 	if err != nil {
 		return err
 	}
-	return d.ls(prjDir, func(p string, _ fs.DirEntry) error {
+	err = d.ls(prjDir, func(p string, _ fs.DirEntry) error {
+		p = filepath.Join(prjDir, p)
 		return os.Remove(p)
 	})
+	if err != nil {
+		return err
+	}
+	return rmDirIfEmpty(prjDir)
 }
 
 func (d DirTree) Moved(strip, dest Directory) (DirTree, error) {
 	var path string
 	if strip == nil {
 		var err error
-		path, err = fsMove(d.Path(), "", dest.Path())
+		path, err = movedPath(d.Path(), "", dest.Path())
 		if err != nil {
 			return DirTree{}, err
 		}
 	} else {
 		var err error
-		path, err = fsMove(d.Path(), strip.Path(), dest.Path())
+		path, err = movedPath(d.Path(), strip.Path(), dest.Path())
 		if err != nil {
 			return DirTree{}, err
 		}

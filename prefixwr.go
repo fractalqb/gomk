@@ -1,27 +1,27 @@
-package gomkore
+package gomk
 
 import (
 	"bytes"
 	"io"
 )
 
-type PrefixWriter struct {
+type prefixWriter struct {
 	w      io.Writer
 	prefix []byte
 	inLine bool // not at start of line (zero…)
 }
 
-func NewPrefixWriter(w io.Writer, prefix []byte) *PrefixWriter {
-	return &PrefixWriter{w: w, prefix: prefix}
+func newPrefixWriter(w io.Writer, prefix []byte) *prefixWriter {
+	return &prefixWriter{w: w, prefix: prefix}
 }
 
-func NewPrefixWriterString(w io.Writer, prefix string) *PrefixWriter {
-	return &PrefixWriter{w: w, prefix: []byte(prefix)}
+func newPrefixWriterString(w io.Writer, prefix string) *prefixWriter {
+	return &prefixWriter{w: w, prefix: []byte(prefix)}
 }
 
-func (pw *PrefixWriter) Reset() { pw.inLine = false }
+func (pw *prefixWriter) Reset() { pw.inLine = false }
 
-func (pw *PrefixWriter) Write(p []byte) (n int, err error) {
+func (pw *prefixWriter) Write(p []byte) (n int, err error) {
 	for len(p) > 0 {
 		nlIdx := bytes.IndexByte(p, '\n')
 		if nlIdx < 0 {

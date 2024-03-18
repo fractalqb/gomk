@@ -10,6 +10,7 @@ func Clean(prj *Project, dryrun bool, tr *Trace) error {
 	start := time.Now()
 	tr = tr.pushProject(prj)
 	tr.startProject(prj, "cleaning")
+	// TODO recursive follow project structure to allow empty dirs to be removed
 	for _, g := range prj.Goals(nil) {
 		if len(g.ResultOf()) == 0 {
 			continue

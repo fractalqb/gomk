@@ -1,6 +1,8 @@
 package gomk
 
 import (
+	"context"
+	"os"
 	"testing"
 
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
@@ -38,4 +40,19 @@ func TestGoals(t *testing.T) {
 		testerr.F1(Goals(gs, true, Tangible, AType[mkfs.Directory])).
 			ShallMsg(t, "illegal goal 1: F")
 	})
+}
+
+func Test_buildProject(t *testing.T) {
+	os.Remove("testdata/prj/doc/foo.cp")
+	prj := gomkore.NewProject("testdata/prj")
+	testerr.F0(Edit(prj, func(prj ProjectEd) {
+		prj.Goal(mkfs.File("doc/foo.cp")).
+			By(mkfs.Copy{}, prj.Goal(mkfs.File("doc/foo.txt")))
+	})).ShallBeNil(t)
+	build := NewBuilder(
+		gomkore.NewTrace(context.Background(), TestTracer{t}),
+		nil,
+	)
+	testerr.F0(build.Project(prj)).ShallBeNil(t)
+	testerr.F1(os.Stat("testdata/prj/doc/foo.cp")).ShallBeNil(t)
 }

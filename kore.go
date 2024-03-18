@@ -11,7 +11,7 @@ import (
 // Edit calls do with wrappers of [gomkore] types that allow easy editing of
 // project definitions. Edit recovers from any panic and returns it as an error,
 // so the idiomatic error handling within do can be skipped.
-func Edit(prj *gomkore.Project, do func(ProjectEd)) (err error) {
+func Edit(prj *gomkore.Project, do func(prj ProjectEd)) (err error) {
 	prj.Lock()
 	defer func() {
 		prj.Unlock()
@@ -88,15 +88,4 @@ func (fo funcOp) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env) erro
 
 func (fo funcOp) WriteHash(hash.Hash, *gomkore.Action, *gomkore.Env) (bool, error) {
 	return false, nil
-}
-
-func mustEd(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-func mustRet[T any](v T, err error) T {
-	mustEd(err)
-	return v
 }

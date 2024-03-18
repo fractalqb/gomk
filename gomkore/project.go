@@ -17,7 +17,7 @@ type Project struct {
 	sync.Mutex
 
 	parent    *Project
-	goals     map[string]*Goal // TODO use key that respect Artefact type correctly
+	goals     map[any]*Goal // TODO use key that respect Artefact type correctly
 	actions   []*Action
 	lastBuild BuildID
 }
@@ -30,7 +30,7 @@ func NewProject(dir string) *Project {
 	}
 	prj := &Project{
 		Dir:   dir,
-		goals: make(map[string]*Goal),
+		goals: make(map[any]*Goal),
 	}
 	return prj
 }
@@ -40,8 +40,8 @@ func (prj *Project) Goal(atf Artefact) (*Goal, error) {
 		n := fmt.Sprintf("artefact-%d", len(prj.goals))
 		atf = Abstract(n)
 	}
-	name := atf.Name(prj)
-	if g := prj.goals[name]; g != nil {
+	key := atf.Key()
+	if g := prj.goals[key]; g != nil {
 		return g, nil
 	}
 	if sub, ok := atf.(*Project); ok {
@@ -58,7 +58,7 @@ func (prj *Project) Goal(atf Artefact) (*Goal, error) {
 		Artefact: atf,
 		prj:      prj,
 	}
-	prj.goals[name] = g
+	prj.goals[key] = g
 	return g, nil
 }
 
@@ -79,6 +79,10 @@ func (prj *Project) Actions() []*Action { return prj.actions }
 func (prj *Project) FindGoal(name string) *Goal {
 	return prj.goals[name]
 }
+
+type prjKey string
+
+func (prj *Project) Key() any { return prjKey(prj.Dir) }
 
 func (prj *Project) Name(in *Project) string {
 	if in == nil {

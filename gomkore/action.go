@@ -37,11 +37,11 @@ func (a *Action) Result(i int) *Goal  { return a.results[i] }
 func (a *Action) LastBuild() BuildID { return a.lastBID }
 
 // Must not run concurrently, see [Goal.LockPreActions] and [tryLock]
-func (a *Action) Run(tr *Trace, bid BuildID, env *Env) (BuildID, error) {
-	if bid <= a.lastBID {
+func (a *Action) Run(tr *Trace, env *Env) (BuildID, error) {
+	if tr.Build() <= a.lastBID {
 		return a.lastBID, nil
 	}
-	a.lastBID = bid
+	a.lastBID = tr.Build()
 	if env == nil {
 		env = DefaultEnv(tr)
 	}
@@ -49,8 +49,14 @@ func (a *Action) Run(tr *Trace, bid BuildID, env *Env) (BuildID, error) {
 		tr.runImplicitAction(a)
 		return 0, nil
 	}
+	var err error
+	env, err = tr.setupActionEnv(env)
+	if err != nil {
+		return 0, err
+	}
+	defer tr.closeActionEnv(env)
 	tr.runAction(a)
-	err := a.Op.Do(tr, a, env)
+	err = a.Op.Do(tr, a, env)
 	switch {
 	case err == nil:
 		return 0, nil
