@@ -170,6 +170,24 @@ func (sn skipNames) Hash(h hash.Hash) {
 	}
 }
 
+type SkipMatch string
+
+func (sm SkipMatch) Ok(_ string, e fs.DirEntry) (bool, error) {
+	if ok, err := filepath.Match(string(sm), e.Name()); err != nil {
+		return false, err
+	} else if ok {
+		if e.IsDir() {
+			return false, fs.SkipDir
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
+func (sm SkipMatch) Hash(h hash.Hash) {
+	fmt.Fprintln(h, "mkfs.SkipMatch", sm)
+}
+
 type All []Filter
 
 func (fs All) Ok(p string, e fs.DirEntry) (bool, error) {

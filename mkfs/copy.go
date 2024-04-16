@@ -37,7 +37,11 @@ func (cp Copy) Do(tr *gomkore.Trace, a *gomkore.Action, _ *gomkore.Env) error {
 		}
 	}
 	for _, res := range a.Results() {
-		switch res := res.Artefact.(type) {
+		atf := res.Artefact
+		if mrr, ok := atf.(Mirror); ok {
+			atf = mrr.Dest
+		}
+		switch res := atf.(type) {
 		case File:
 			return cp.toFile(tr, a.Project(), res, prems)
 		case DirList:
@@ -167,15 +171,9 @@ func (cp Copy) toTree(tr *gomkore.Trace, prj *gomkore.Project, dst DirTree, srcs
 		return err
 	}
 	for _, src := range srcs {
-		srcPath, err := prj.AbsPath(src.Path())
+		srcPath, err := copyCheckNesting(prj, dst, dstPath, src)
 		if err != nil {
-			return err
-		}
-		if warn := copyCheckNesting(dstPath, srcPath); warn != "" {
-			tr.Warn(warn,
-				`source`, src.Path(),
-				`target`, dst,
-			)
+			tr.Warn("FS copy: `skipping`", `skipping`, err)
 			continue
 		}
 		switch src := src.(type) {
@@ -201,13 +199,9 @@ func (cp Copy) toTree(tr *gomkore.Trace, prj *gomkore.Project, dst DirTree, srcs
 			}
 		case DirTree:
 			err = src.ls(srcPath, func(s string, _ fs.DirEntry) error {
-				rel, err := filepath.Rel(srcPath, s)
-				if err != nil {
-					return err
-				}
 				return cp.copyEntry(tr,
-					filepath.Join(dstPath, rel),
-					s,
+					filepath.Join(dstPath, s),
+					filepath.Join(srcPath, s),
 				)
 			})
 			if err != nil {
@@ -218,11 +212,36 @@ func (cp Copy) toTree(tr *gomkore.Trace, prj *gomkore.Project, dst DirTree, srcs
 	return nil
 }
 
-func copyCheckNesting(target, source string) string {
-	if strings.HasPrefix(target, source) {
-		return "FS copy: skipping `target` inside `source` directory"
+func copyCheckNesting(prj *gomkore.Project, dst Directory, dstPath string, src Artefact) (srcPath string, err error) {
+	srcPath, err = prj.AbsPath(src.Path())
+	if err != nil {
+		return srcPath, err
 	}
-	return ""
+	if !strings.HasPrefix(dstPath, srcPath) {
+		return srcPath, nil
+	}
+	switch src := src.(type) {
+	case Directory:
+		ok, err := src.Contains(prj, dst)
+		if err != nil {
+			return srcPath, err
+		}
+		if !ok {
+			return srcPath, nil
+		}
+	case Mirror:
+		ok, err := src.Dest.Contains(prj, dst)
+		if err != nil {
+			return srcPath, err
+		}
+		if !ok {
+			return srcPath, nil
+		}
+	}
+	return srcPath, fmt.Errorf("target '%s' inside source directory '%s'",
+		dst.Path(),
+		src.Path(),
+	)
 }
 
 func (cp Copy) copyEntry(tr *gomkore.Trace, dst, src string) error {

@@ -3,6 +3,7 @@ package mkfs
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -46,15 +47,28 @@ func (m Mirror) StateAt(in *gomkore.Project) (t time.Time, err error) {
 		}
 		return nil
 	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return time.Time{}, nil
+	}
 	return
 }
 
-func (m Mirror) Exists(in *gomkore.Project) (bool, error) {
-	return m.Dest.Exists(in)
+func (m Mirror) Exists(in *gomkore.Project) (ok bool, err error) {
+	t, err := m.StateAt(in)
+	if err != nil {
+		return false, err
+	}
+	return !t.IsZero(), nil
 }
 
 func (m Mirror) Remove(in *gomkore.Project) error {
-	return m.Dest.Remove(in)
+	return m.ls(in, func(rel string) error {
+		abs, err := in.AbsPath(rel)
+		if err != nil {
+			return err
+		}
+		return os.Remove(abs)
+	})
 }
 
 func (m Mirror) Path() string { return m.Dest.Path() }
@@ -83,7 +97,7 @@ func (m Mirror) ls(in *gomkore.Project, do func(rel string) error) error {
 	switch dest := m.Dest.(type) {
 	case DirList:
 		return m.Orig.ls(orig, func(_ string, e fs.DirEntry) error {
-			e = m.maxExtE(e)
+			e = m.mapExtE(e)
 			p := filepath.Join(dest.Path(), e.Name())
 			if dest.Filter != nil {
 				if ok, err := dest.Filter.Ok(p, e); err != nil {
@@ -98,7 +112,7 @@ func (m Mirror) ls(in *gomkore.Project, do func(rel string) error) error {
 		})
 	case DirTree:
 		return m.Orig.ls(orig, func(p string, e fs.DirEntry) error {
-			e = m.maxExtE(e)
+			e = m.mapExtE(e)
 			p = m.mapExtP(p)
 			p = filepath.Join(orig, p)
 			rel, err := filepath.Rel(strip, p)
@@ -128,7 +142,7 @@ type extMapEntry struct {
 
 func (e extMapEntry) Name() string { return e.name }
 
-func (m Mirror) maxExtE(e fs.DirEntry) fs.DirEntry {
+func (m Mirror) mapExtE(e fs.DirEntry) fs.DirEntry {
 	if m.ExtMap == nil {
 		return e
 	}

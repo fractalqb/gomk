@@ -50,6 +50,7 @@ func Moved(a Artefact, strip, dest Directory) (Artefact, error) {
 type Directory interface {
 	Artefact
 	List(in *gomkore.Project) ([]string, error)
+	Contains(in *gomkore.Project, a Artefact) (bool, error)
 
 	ls(string, func(string, fs.DirEntry) error) error
 }
@@ -84,3 +85,12 @@ func isDirEmpty(path string) (bool, error) {
 	}
 	return false, err
 }
+
+type infoEntry struct{ fs.FileInfo }
+
+var _ fs.DirEntry = infoEntry{}
+
+func (ie infoEntry) IsDir() bool                { return ie.FileInfo.IsDir() }
+func (ie infoEntry) Type() fs.FileMode          { return ie.FileInfo.Mode().Type() }
+func (ie infoEntry) Info() (fs.FileInfo, error) { return ie.FileInfo, nil }
+func (ie infoEntry) Name() string               { return ie.FileInfo.Name() }

@@ -34,6 +34,27 @@ func (d DirList) List(in *gomkore.Project) (ls []string, err error) {
 	return
 }
 
+func (d DirList) Contains(in *gomkore.Project, a Artefact) (bool, error) {
+	aDir := filepath.Dir(a.Path())
+	dPath := filepath.Clean(d.Path())
+	if aDir != dPath || d.Filter == nil {
+		return false, nil
+	}
+	aPrj, err := in.AbsPath(a.Path())
+	if err != nil {
+		return false, err
+	}
+	stat, err := os.Stat(aPrj)
+	if err != nil {
+		return false, err
+	}
+	ok, err := d.Filter.Ok(a.Path(), infoEntry{FileInfo: stat})
+	if errors.Is(err, fs.SkipDir) {
+		err = nil
+	}
+	return ok, err
+}
+
 func (d DirList) Goals(in *gomkore.Project) (gs []*gomkore.Goal, err error) {
 	prjDir, err := in.AbsPath(d.Path())
 	if err != nil {

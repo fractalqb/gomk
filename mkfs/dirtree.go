@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"git.fractalqb.de/fractalqb/gomk/gomkore"
@@ -56,6 +57,27 @@ func (d DirTree) List(in *gomkore.Project) (ls []string, err error) {
 		return nil
 	})
 	return
+}
+
+func (d DirTree) Contains(in *gomkore.Project, a Artefact) (bool, error) {
+	aPath := filepath.Clean(a.Path())
+	dPath := filepath.Clean(d.Path())
+	if dPath != "." && !strings.HasPrefix(aPath, dPath) {
+		return false, nil
+	}
+	aPrj, err := in.AbsPath(aPath)
+	if err != nil {
+		return false, err
+	}
+	stat, err := os.Stat(aPrj)
+	if err != nil {
+		return false, err
+	}
+	ok, err := d.Filter.Ok(aPath, infoEntry{FileInfo: stat})
+	if errors.Is(err, fs.SkipDir) {
+		err = nil
+	}
+	return ok, err
 }
 
 func (d DirTree) Goals(in *gomkore.Project) (gs []*gomkore.Goal, err error) {
