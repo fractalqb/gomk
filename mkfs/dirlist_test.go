@@ -26,7 +26,7 @@ func TestDirList_ls(t *testing.T) {
 func TestDirList_List(t *testing.T) {
 	prj := gomkore.NewProject("testdata")
 	d := DirList{Dir: "ls", Filter: IsDir(false)}
-	ls := testerr.F1(d.List(prj)).ShallBeNil(t)
+	ls := testerr.Shall1(d.List(prj)).BeNil(t)
 	if l := len(ls); l != 1 {
 		t.Fatalf("ls len: %d", l)
 	}
@@ -38,8 +38,8 @@ func TestDirList_List(t *testing.T) {
 func TestDirList_StateAt(t *testing.T) {
 	prj := gomkore.NewProject("testdata")
 	d := DirList{Dir: "ls", Filter: IsDir(false)}
-	stat := testerr.F1(os.Stat("testdata/ls/empty.txt")).ShallBeNil(t)
-	at := testerr.F1(d.StateAt(prj)).ShallBeNil(t)
+	stat := testerr.Shall1(os.Stat("testdata/ls/empty.txt")).BeNil(t)
+	at := testerr.Shall1(d.StateAt(prj)).BeNil(t)
 	if at != stat.ModTime() {
 		t.Errorf("unexpected mod time %s, want %s", at, stat.ModTime())
 	}
@@ -48,7 +48,7 @@ func TestDirList_StateAt(t *testing.T) {
 func TestDirList_Remove(t *testing.T) {
 	prj := gomkore.NewProject("testdata")
 	d := DirList{Dir: "ls", Filter: IsDir(false)}
-	cwd := testerr.F1(os.Getwd()).ShallBeNil(t)
+	cwd := testerr.Shall1(os.Getwd()).BeNil(t)
 	emsg := fmt.Sprintf("remove %s/testdata/ls/empty.txt: permission denied", cwd)
-	testerr.F0(d.Remove(prj)).ShallMsg(t, emsg)
+	testerr.Shall(d.Remove(prj)).Check(t, testerr.Msg(emsg))
 }

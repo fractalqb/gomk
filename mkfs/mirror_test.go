@@ -15,7 +15,7 @@ func TestMirror_List(t *testing.T) {
 		ExtMap: map[string]string{".txt": ".doc"},
 	}
 	prj := gomkore.NewProject("")
-	ls := testerr.F1(mirr.List(prj)).ShallBeNil(t)
+	ls := testerr.Shall1(mirr.List(prj)).BeNil(t)
 	if l := len(ls); l != 1 {
 		t.Fatalf("list len %d", l)
 	}
