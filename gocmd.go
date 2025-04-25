@@ -49,7 +49,7 @@ var _ gomkore.Operation = (*GoBuild)(nil)
 
 func (gb *GoBuild) Describe(a *gomkore.Action, _ *gomkore.Env) string {
 	if gb.Install {
-		gb.describe("install", a)
+		return gb.describe("install", a)
 	}
 	return gb.describe("build", a)
 }
@@ -77,10 +77,10 @@ func (gb *GoBuild) Do(tr *gomkore.Trace, a *gomkore.Action, env *gomkore.Env) er
 	if gb.Install {
 		op.Args[0] = "install"
 	}
-	if len(res) == 1 {
+	if len(res) == 1 && !gb.Install {
 		fs, ok := res[0].Artefact.(mkfs.Artefact)
 		if !ok {
-			return fmt.Errorf("invalid go buidl result type %T", res[0])
+			return fmt.Errorf("invalid go build result type %T", res[0])
 		}
 		op.Args = append(op.Args, "-o", fs.Path())
 	}
